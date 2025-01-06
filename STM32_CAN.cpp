@@ -653,7 +653,21 @@ void STM32_CAN::end()
   }
 #endif
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-/** TODO: de-init FDCAN */
+  /** NOTE: all platforms have common clock enable signal,
+   * only stop clock if this is the last active instance */
+  uint8_t activeCan = 0;
+  activeCan += (canObj[CAN1_INDEX] != nullptr) ? 1 : 0;
+  #ifdef FDCAN2
+  activeCan += (canObj[CAN2_INDEX] != nullptr) ? 1 : 0;
+  #endif
+  #ifdef FDCAN3
+  activeCan += (canObj[CAN3_INDEX] != nullptr) ? 1 : 0;
+  #endif
+  if(activeCan == 1)
+  {
+    // we are last active instance, shutdown
+    __HAL_RCC_FDCAN_CLK_DISABLE();
+  }
 #endif
 
   /** un-init pins, enable tx PULLUP for weak driving of recessive state */

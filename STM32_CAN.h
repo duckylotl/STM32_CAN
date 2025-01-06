@@ -135,6 +135,7 @@ to same folder with sketch and haven #define HAL_CAN_MODULE_ENABLED there. See e
 #if defined(STM32U5xx) || defined(STM32L5xx)
 //single FDCAN platforms, alias clock enable macro
 #define __HAL_RCC_FDCAN_CLK_ENABLE __HAL_RCC_FDCAN1_CLK_ENABLE
+#define __HAL_RCC_FDCAN_CLK_DISABLE __HAL_RCC_FDCAN1_CLK_DISABLE
 #endif
 
 #if defined(HAL_CAN_MODULE_ENABLED)
