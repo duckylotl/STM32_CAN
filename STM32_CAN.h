@@ -132,6 +132,12 @@ to same folder with sketch and haven #define HAL_CAN_MODULE_ENABLED there. See e
 #endif
 #endif
 
+#if defined(STM32U5xx) || defined(STM32L5xx)
+//single FDCAN platforms, alias clock enable macro
+#define __HAL_RCC_FDCAN_CLK_ENABLE __HAL_RCC_FDCAN1_CLK_ENABLE
+#endif
+
+#if defined(HAL_CAN_MODULE_ENABLED)
 #if defined(STM32_CAN1_TX_RX0_BLOCKED_BY_USB) && !defined(STM32_CAN_USB_WORKAROUND_POLLING)
 #error "USB and CAN interrupts are shared on the F1/F3 platform, driver is not compatible with USBDevice of Arduino core. Can define STM32_CAN_USB_WORKAROUND_POLLING to disable error msg and call STM32_CAN_Poll_IRQ_Handler to poll for Tx IRQ events. Only use FIFO 1."
 #elif defined(USBCON) && defined(STM32_CAN_USB_WORKAROUND_POLLING)
@@ -142,6 +148,18 @@ extern "C" void STM32_CAN_Poll_IRQ_Handler(void);
 #else
 #define CAN_FILTER_DEFAULT_FIFO   CAN_FILTER_FIFO0
 #define CAN_FILTER_DEFAULT_ACTION STORE_FIFO0
+#endif
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+#define CAN_FILTER_DEFAULT_FIFO   FDCAN_FILTER_FIFO0
+#define CAN_FILTER_DEFAULT_ACTION STORE_FIFO0
+#endif
+#if defined(STM32G0xx) || defined(STM32G4xx) || defined(STM32H5xx) || defined(STM32U5xx) || defined(STM32L5xx)
+#define STM32_FDCAN_MEM_LAYOUT_FIXED
+
+#elif defined(STM32H7xx)
+#define STM32_FDCAN_MEM_LAYOUT_CONFIGURABLE
+#error "FDCAN with configurable memory layout not yet supported"
 #endif
 
 
@@ -159,7 +177,11 @@ typedef struct CAN_message_t {
     bool reserved = 0;
   } flags;
   uint8_t len = 8;         // length of data
+#if defined(HAL_CAN_MODULE_ENABLED)
   uint8_t buf[8] = { 0 };  // data
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  uint8_t buf[64] = { 0 };  // data
+#endif
   int8_t mb = 0;           // used to identify mailbox reception
   uint8_t bus = 1;         // used to identify where the message came (CAN1, CAN2 or CAN3)
   bool seq = 0;            // sequential frames
@@ -248,7 +270,11 @@ typedef enum IDE {
 
 typedef struct {
   void * __this;
+#if defined(HAL_CAN_MODULE_ENABLED)
   CAN_HandleTypeDef handle;
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  FDCAN_HandleTypeDef handle;
+#endif
   uint32_t bus;
 } stm32_can_t;
 
@@ -256,29 +282,66 @@ class STM32_CAN {
 
   public:
     enum MODE {
+      #if defined(HAL_CAN_MODULE_ENABLED)
       NORMAL               = CAN_MODE_NORMAL,
       SILENT               = CAN_MODE_SILENT,
       SILENT_LOOPBACK      = CAN_MODE_SILENT_LOOPBACK,
       LOOPBACK             = CAN_MODE_LOOPBACK
+      #elif defined(HAL_FDCAN_MODULE_ENABLED)
+      NORMAL               = FDCAN_MODE_NORMAL,
+      /** alias of CAN names for compatibility */
+      SILENT               = FDCAN_MODE_BUS_MONITORING,
+      SILENT_LOOPBACK      = FDCAN_MODE_INTERNAL_LOOPBACK,
+      LOOPBACK             = FDCAN_MODE_EXTERNAL_LOOPBACK,
+      /** FDCAN names */
+      BUS_MONITORING       = FDCAN_MODE_BUS_MONITORING,       /**SILENT */
+      INTERNAL_LOOPBACK    = FDCAN_MODE_INTERNAL_LOOPBACK,    /**SILENT LOOPBACK*/
+      EXTERNAL_LOOPBACK    = FDCAN_MODE_EXTERNAL_LOOPBACK,    /** LOOPBACK */
+      RESTRICTED_OPERATION = FDCAN_MODE_RESTRICTED_OPERATION, /** Like NORMAL, but no active error or overload frames */
+      #endif
     };
 
     enum FILTER_ACTION {
       STORE_FIFO0,
       STORE_FIFO1,
+      #if defined(HAL_FDCAN_MODULE_ENABLED)
+      REJECT,
+      HIGH_PRIORITY, /** No storage, just set IRQ flag*/
+      STORE_FIFO0_HIGH_PRIORITY,
+      STORE_FIFO1_HIGH_PRIORITY,
+      #endif
     };
 
     enum TX_BUFFER_MODE {
+      #if defined(HAL_CAN_MODULE_ENABLED)
       FIFO  = ENABLE, /** Sequencial transfers order */
       QUEUE = DISABLE /** Sequence based on msg ID priorites. Only effects hardware queue. */
+      #elif defined(HAL_FDCAN_MODULE_ENABLED)
+      FIFO  = FDCAN_TX_FIFO_OPERATION, /** Sequencial transfers order */
+      QUEUE = FDCAN_TX_QUEUE_OPERATION /** Sequence based on msg ID priorites. Only effects hardware queue. */
+      #endif
     };
 
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    enum FRAME_FORMAT {
+      CLASSIC   = FDCAN_FRAME_CLASSIC,
+      FD_NO_BRS = FDCAN_FRAME_FD_NO_BRS,
+      FD_BRS    = FDCAN_FRAME_FD_BRS
+    };
+#endif
 
     // Default buffer sizes are set to 16. But this can be changed by using constructor in main code.
     STM32_CAN(uint32_t rx, uint32_t tx = PNUM_NOT_DEFINED, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
     STM32_CAN(PinName rx, PinName tx = NC, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
+#if defined(HAL_CAN_MODULE_ENABLED)
     STM32_CAN(CAN_TypeDef* canPort, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
     //legacy for compatibility
     STM32_CAN(CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    STM32_CAN(FDCAN_GlobalTypeDef* canPort, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
+#endif
+
 /**-------------------------------------------------------------
  *     setup functions
  *     no effect after begin()
@@ -301,8 +364,27 @@ class STM32_CAN {
     void enableSilentMode(bool yes = 1);
     void enableSilentLoopBack(bool yes = 1);
 
+#if defined(HAL_CAN_MODULE_ENABLED)
     void setAutoBusOffRecovery(bool enabled);
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    /** FD modes not supported yet */
+    void setFrameFormat(FRAME_FORMAT format);
+
+    /** Adds pause after message before sending next message.
+     * Allows other nodes to send potentially lower priority messages in the pauses
+     * in case this node takes up much of the bus while sending message bursts. */
+    void setTransmitPause(bool enabled);
+    void setProtocolException(bool enabled);
+
+    /** Mask applied to all Ext Id filters (except for range filters with nEIDM=true) */
+    void setExtIdAndMask(uint32_t mask);
+
+    /** Valid actions only STORE_FIFO0, STORE_FIFO1, REJECT */
+    void setFilterGlobalNonMatching(FILTER_ACTION actionStd, FILTER_ACTION actionExt);
+    void setFilterGlobalRTR(bool rejectStdRTR, bool rejectExtRTR);
+#endif
+    
 /**-------------------------------------------------------------
  *     lifecycle functions
  *     setBaudRate may be called before or after begin
@@ -325,7 +407,11 @@ class STM32_CAN {
     uint8_t getFilterBankCount(IDE std_ext = STD);
     /** returns if filter count and index are shared (true) or dedicated per id type (false) */
     bool hasSharedFilterBanks() {
+    #if defined(HAL_CAN_MODULE_ENABLED)
       return true;
+    #elif defined(HAL_FDCAN_MODULE_ENABLED)
+      return false;
+    #endif
     }
 
     /** 
@@ -333,16 +419,33 @@ class STM32_CAN {
      * These return true on success
      */
     /** set filter state and action, keeps filter rules intact */
+#if defined(HAL_CAN_MODULE_ENABLED)
     bool setFilter(uint8_t bank_num, bool enabled, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION);
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    bool setFilter(uint8_t bank_num, bool enabled, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, IDE std_ext = STD);
+#endif
+
     bool setFilterSingleMask(uint8_t bank_num, uint32_t id, uint32_t mask, IDE std_ext, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
+    /** NOTE: FDCAN does not support dual filter with different id types. std_ext1 has to be equal to std_ext2 */
     bool setFilterDualID(uint8_t bank_num, uint32_t id1, uint32_t id2, IDE std_ext1, IDE std_ext2, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
+
+#if defined(HAL_CAN_MODULE_ENABLED)
     bool setFilterDualMask(uint8_t bank_num, uint32_t id1, uint32_t mask1, IDE std_ext1, uint32_t id2, uint32_t mask2, IDE std_ext2, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
     bool setFilterQuadID(uint8_t bank_num, uint32_t id1, IDE std_ext1, uint32_t id2, IDE std_ext2, uint32_t id3, IDE std_ext3, uint32_t id4, IDE std_ext4, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
     bool setFilterRaw(uint8_t bank_num, uint32_t id, uint32_t mask, uint32_t filter_mode, uint32_t filter_scale, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    /** nEIDM only relevant for ext ID filters. If true will not use the global Ext Id And Mask with this filter. */
+    bool setFilterRange   (uint8_t bank_num, uint32_t id1, uint32_t id2,  IDE std_ext, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true, bool nEIDM = false);
+    bool setFilterRaw     (uint8_t bank_num, uint32_t id,  uint32_t mask, IDE std_ext, uint32_t filter_type, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
+#endif
+
+#if defined(HAL_CAN_MODULE_ENABLED)
     /** Legacy, broken! Only works correctly for 32 bit mask mode 
      * Retruns true on Error, false on Success (like Teensy functions, opposite of STM32 function)
     */
     bool setFilter(uint8_t bank_num, uint32_t filter_id, uint32_t mask, IDE = AUTO, uint32_t filter_mode = CAN_FILTERMODE_IDMASK, uint32_t filter_scale = CAN_FILTERSCALE_32BIT, uint32_t fifo = CAN_FILTER_DEFAULT_FIFO);
+#endif
 
 /**-------------------------------------------------------------
  *     Teensy FlexCAN compatibility functions
@@ -358,6 +461,12 @@ class STM32_CAN {
     void enableFIFO(bool status = 1);
     void enableMBInterrupts();
     void disableMBInterrupts();
+
+#if defined(HAL_CAN_MODULE_ENABLED)
+    static bool isCANFD() { return false; }
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    static bool isCANFD() { return true; }
+#endif
 
     // These are public because these are also used from interrupts.
     typedef struct RingbufferTypeDef {
@@ -379,7 +488,11 @@ class STM32_CAN {
 
   private:
     void      init(void);
+#if defined(HAL_CAN_MODULE_ENABLED)
     CAN_TypeDef * getPeripheral(void);
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+    FDCAN_GlobalTypeDef * getPeripheral(void);
+#endif
     bool      allocatePeripheral(void);
     bool      freePeripheral(void);
     bool      hasPeripheral(void);
@@ -445,6 +558,19 @@ class STM32_CAN {
     bool     _canIsActive = false;
 
     uint32_t baudrate;
+    
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    bool timestampCounterEnabled;
+    bool fifo0locked;
+    bool fifo1locked;
+
+    uint32_t extIdAndMask;
+    FILTER_ACTION actionStd;
+    FILTER_ACTION actionExt;
+    bool rejectStdRTR;
+    bool rejectExtRTR;
+#endif
+
     bool filtersInitialized;
 
     PinName rx;

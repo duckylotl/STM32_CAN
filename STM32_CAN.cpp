@@ -11,9 +11,43 @@
 extern CEC_HandleTypeDef * phcec;
 #endif
 
+#if defined(HAL_FDCAN_MODULE_ENABLED) && defined(STM32G0xx) && defined(FDCAN1)
+/** On the G0 platform (STM32G0B1xx, STM32G0C1xx) the 2 FDCAN IRQs are shared
+ * for both CAN instances. Additionally also shared with a Timer instance each.
+ * The HardwareTimer driver from STM32 Arduino core already defines these IRQ
+ * handlers, so we can't use them. But it does call the FDCAN IRQ Handler for us
+ * if we set the following 2 pointer to a valid handler instance.
+ */
+FDCAN_HandleTypeDef *phfdcan1 = nullptr;
+#ifdef FDCAN2
+FDCAN_HandleTypeDef *phfdcan2 = nullptr;
+#endif
+#endif
+
+#if defined(HAL_CAN_MODULE_ENABLED)
 #define STM32_CAN_SINGLE_CAN_FILTER_COUNT 14
 #define STM32_CAN_DUAL_CAN_FILTER_COUNT 28
 #define STM32_CAN_CAN2_FILTER_OFFSET 14
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+#ifdef STM32_FDCAN_MEM_LAYOUT_FIXED
+#define STM32_FDCAN_STD_FILTER_COUNT 28
+#define STM32_FDCAN_EXT_FILTER_COUNT 8
+#endif
+
+#define STM32_FDCAN_SF_Size      (4U)
+#define STM32_FDCAN_SF_T_Pos     (30U)
+#define STM32_FDCAN_SF_T_Msk     (0x3UL << (STM32_FDCAN_SF_T_Pos))
+#define STM32_FDCAN_SF_EC_Pos    (27U)
+#define STM32_FDCAN_SF_EC_Msk    (0x7UL << (STM32_FDCAN_SF_EC_Pos))
+
+#define STM32_FDCAN_EF_Size      (8U)
+#define STM32_FDCAN_EF_W1_T_Pos  (30U)
+#define STM32_FDCAN_EF_W1_T_Msk  (0x3UL << (STM32_FDCAN_EF_W1_T_Pos))
+#define STM32_FDCAN_EF_W0_EC_Pos (29U)
+#define STM32_FDCAN_EF_W0_EC_Msk (0x7UL << (STM32_FDCAN_EF_W0_EC_Pos))
+
+#endif
 
 //Max value, lowest priority
 #define MAX_IRQ_PRIO_VALUE ((1UL << __NVIC_PRIO_BITS) - 1UL)
@@ -24,13 +58,13 @@ constexpr Baudrate_entry_t STM32_CAN::BAUD_RATE_TABLE_45M[];
 uint32_t test = 0;
 
 typedef enum {
-#ifdef CAN1
+#if defined(CAN1) || defined(FDCAN1)
   CAN1_INDEX,
 #endif
-#ifdef CAN2
+#if defined(CAN2) || defined(FDCAN2)
   CAN2_INDEX,
 #endif
-#ifdef CAN3
+#if defined(CAN3) || defined(FDCAN3)
   CAN3_INDEX,
 #endif
   CAN_NUM,
@@ -39,16 +73,25 @@ typedef enum {
 
 static stm32_can_t * canObj[CAN_NUM] = {NULL};
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 stm32_can_t *get_can_obj(CAN_HandleTypeDef *hcan)
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+stm32_can_t *get_can_obj(FDCAN_HandleTypeDef *hcan)
+#endif
 {
   stm32_can_t *obj;
   obj = (stm32_can_t *)((char *)hcan - offsetof(stm32_can_t, handle));
   return (obj);
 }
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 can_index_t get_can_index(CAN_TypeDef *instance)
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+can_index_t get_can_index(FDCAN_GlobalTypeDef *instance)
+#endif
 {
   can_index_t index = CAN_UNKNOWN;
+#if defined(HAL_CAN_MODULE_ENABLED)
 #if defined(CAN1)
   if (instance == CAN1) {
     index = CAN1_INDEX;
@@ -63,6 +106,24 @@ can_index_t get_can_index(CAN_TypeDef *instance)
   if (instance == CAN3) {
     index = CAN3_INDEX;
   }
+#endif
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+#if defined(FDCAN1)
+  if (instance == FDCAN1) {
+    index = CAN1_INDEX;
+  }
+#endif
+#if defined(FDCAN2)
+  if (instance == FDCAN2) {
+    index = CAN2_INDEX;
+  }
+#endif
+#if defined(FDCAN3)
+  if (instance == FDCAN3) {
+    index = CAN3_INDEX;
+  }
+#endif
 #endif
   if (index == CAN_UNKNOWN) {
     Error_Handler();
@@ -131,6 +192,7 @@ STM32_CAN::STM32_CAN(PinName rx, PinName tx, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE
   init();
 }
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE txSize )
   : sizeRxBuffer(rxSize), sizeTxBuffer(txSize),
     preemptPriority(MAX_IRQ_PRIO_VALUE), subPriority(0)
@@ -201,6 +263,18 @@ STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize,
   init();
 }
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+STM32_CAN::STM32_CAN( FDCAN_GlobalTypeDef* canPort, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE txSize )
+  : sizeRxBuffer(rxSize), sizeTxBuffer(txSize),
+    preemptPriority(MAX_IRQ_PRIO_VALUE), subPriority(0)
+{
+  //get first matching pins from map
+  rx = pinmap_find_pin(canPort, PinMap_CAN_RD);
+  tx = pinmap_find_pin(canPort, PinMap_CAN_TD);
+  init();
+}
+#endif
+
 void STM32_CAN::init(void)
 {
   _can.__this = (void*)this;
@@ -209,18 +283,44 @@ void STM32_CAN::init(void)
   filtersInitialized = false;
 
   setTimestampCounter(false);
-  setAutoBusOffRecovery(false);
-  _can.handle.Init.AutoWakeUp = DISABLE;
-  setRxFIFOLock(false);
   setTxBufferMode(TX_BUFFER_MODE::FIFO);
   setMode(MODE::NORMAL);
   setAutoRetransmission(true);
+
+#if defined(HAL_CAN_MODULE_ENABLED)
+  setAutoBusOffRecovery(false);
+  setRxFIFOLock(false);
+  _can.handle.Init.AutoWakeUp = DISABLE;
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  _can.handle.Init.ClockDivider = FDCAN_CLOCK_DIV1;
+
+  setFrameFormat(CLASSIC);
+  setRxFIFOLock(false, false);
+  setTransmitPause(false);
+  setProtocolException(true);
+
+  setFilterGlobalNonMatching(REJECT, REJECT);
+  setFilterGlobalRTR(false, false);
+
+  _can.handle.Init.StdFiltersNbr = STM32_FDCAN_STD_FILTER_COUNT;
+  _can.handle.Init.ExtFiltersNbr = STM32_FDCAN_EXT_FILTER_COUNT;
+#endif
 }
 
-CAN_TypeDef * STM32_CAN::getPeripheral()
+#if defined(HAL_CAN_MODULE_ENABLED)
+CAN_TypeDef   * STM32_CAN::getPeripheral()
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+FDCAN_GlobalTypeDef * STM32_CAN::getPeripheral()
+#endif
 {
+  #if defined(HAL_CAN_MODULE_ENABLED)
   CAN_TypeDef * canPort_rx = (CAN_TypeDef *) pinmap_peripheral(rx, PinMap_CAN_RD);
   CAN_TypeDef * canPort_tx = (CAN_TypeDef *) pinmap_peripheral(tx, PinMap_CAN_TD);
+  #elif defined(HAL_FDCAN_MODULE_ENABLED)
+  FDCAN_GlobalTypeDef * canPort_rx = (FDCAN_GlobalTypeDef *) pinmap_peripheral(rx, PinMap_CAN_RD);
+  FDCAN_GlobalTypeDef * canPort_tx = (FDCAN_GlobalTypeDef *) pinmap_peripheral(tx, PinMap_CAN_TD);
+  #endif
   if ((canPort_rx != canPort_tx && canPort_tx != NP) || canPort_rx == NP)
   {
     //ensure pins relate to same peripheral OR only Rx is set/valid
@@ -274,18 +374,31 @@ void STM32_CAN::setAutoRetransmission(bool enabled)
 
 void STM32_CAN::setRxFIFOLock(bool fifo0locked, bool fifo1locked)
 {
+#if defined(HAL_CAN_MODULE_ENABLED)
   (void)fifo1locked;
   _can.handle.Init.ReceiveFifoLocked = fifo0locked ? (ENABLE) : (DISABLE);
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  this->fifo0locked = fifo0locked;
+  this->fifo1locked = fifo1locked;
+#endif
 }
 
 void STM32_CAN::setTxBufferMode(TX_BUFFER_MODE mode)
 {
+  #if defined(HAL_CAN_MODULE_ENABLED)
   _can.handle.Init.TransmitFifoPriority = (FunctionalState)mode;
+  #elif defined(HAL_FDCAN_MODULE_ENABLED)
+  _can.handle.Init.TxFifoQueueMode = mode;
+  #endif
 }
 
 void STM32_CAN::setTimestampCounter(bool enabled)
 {
+#if defined(HAL_CAN_MODULE_ENABLED)
   _can.handle.Init.TimeTriggeredMode = enabled ? (ENABLE) : (DISABLE);
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  timestampCounterEnabled = enabled;
+#endif
 }
 
 void STM32_CAN::setMode(MODE mode)
@@ -305,10 +418,53 @@ void STM32_CAN::enableSilentLoopBack( bool yes ) {
   setMode(yes ? MODE::SILENT_LOOPBACK : MODE::NORMAL);
 }
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 void STM32_CAN::setAutoBusOffRecovery(bool enabled)
 {
   _can.handle.Init.AutoBusOff = enabled ? (ENABLE) : (DISABLE);
 }
+#endif
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+
+void STM32_CAN::setFrameFormat(FRAME_FORMAT format)
+{
+  _can.handle.Init.FrameFormat = format;
+}
+
+void STM32_CAN::setTransmitPause(bool enabled)
+{
+  _can.handle.Init.TransmitPause = enabled ? (ENABLE) : (DISABLE);
+}
+
+void STM32_CAN::setProtocolException(bool enabled)
+{
+  _can.handle.Init.ProtocolException = enabled ? (ENABLE) : (DISABLE);
+}
+
+void STM32_CAN::setExtIdAndMask(uint32_t mask)
+{
+  this->extIdAndMask = mask;
+}
+
+void STM32_CAN::setFilterGlobalNonMatching(FILTER_ACTION actionStd, FILTER_ACTION actionExt)
+{
+  if(actionStd == STORE_FIFO0 || actionStd == STORE_FIFO1 || actionStd == REJECT )
+  {
+    this->actionStd = actionStd;
+  }
+  if(actionExt == STORE_FIFO0 || actionExt == STORE_FIFO1 || actionExt == REJECT )
+  {
+    this->actionExt = actionExt;
+  }
+}
+void STM32_CAN::setFilterGlobalRTR(bool rejectStdRTR, bool rejectExtRTR)
+{
+  this->rejectStdRTR = rejectStdRTR;
+  this->rejectExtRTR = rejectExtRTR;
+}
+
+#endif
 
 /**-------------------------------------------------------------
  *     lifecycle functions
@@ -345,6 +501,7 @@ void STM32_CAN::begin( bool retransmission ) {
   }
 
   // Configure CAN
+  #if defined(HAL_CAN_MODULE_ENABLED)
   if (_can.handle.Instance == CAN1)
   {
     //CAN1
@@ -406,6 +563,54 @@ void STM32_CAN::begin( bool retransmission ) {
   }
 #endif
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+#if defined(FDCAN1)
+  if (_can.handle.Instance == FDCAN1) {
+    __HAL_RCC_FDCAN_CLK_ENABLE();
+
+#if defined(STM32G0xx)
+    HAL_NVIC_SetPriority(TIM16_FDCAN_IT0_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_SetPriority(TIM17_FDCAN_IT1_IRQn, preemptPriority, subPriority);
+    phfdcan1 = &_can.handle;
+    HAL_NVIC_EnableIRQ(TIM16_FDCAN_IT0_IRQn);
+#else
+    HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_SetPriority(FDCAN1_IT1_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
+#endif
+    _can.bus = 1;
+  }
+#endif
+#if defined(FDCAN2)
+  else if (_can.handle.Instance == FDCAN2) {
+    __HAL_RCC_FDCAN_CLK_ENABLE();
+
+#if defined(STM32G0xx)
+    HAL_NVIC_SetPriority(TIM16_FDCAN_IT0_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_SetPriority(TIM17_FDCAN_IT1_IRQn, preemptPriority, subPriority);
+    phfdcan2 = &_can.handle;
+    HAL_NVIC_EnableIRQ(TIM16_FDCAN_IT0_IRQn);
+#else
+    HAL_NVIC_SetPriority(FDCAN2_IT0_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_SetPriority(FDCAN2_IT1_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_EnableIRQ(FDCAN2_IT0_IRQn);
+#endif
+    _can.bus = 2;
+  }
+#endif
+#if defined(FDCAN3)
+  else if (_can.handle.Instance == FDCAN3) {
+    __HAL_RCC_FDCAN_CLK_ENABLE();
+
+    HAL_NVIC_SetPriority(FDCAN3_IT0_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_SetPriority(FDCAN3_IT1_IRQn, preemptPriority, subPriority);
+    HAL_NVIC_EnableIRQ(FDCAN3_IT0_IRQn);
+    _can.bus = 3;
+  }
+#endif
+#endif
+
+
   setAutoRetransmission(retransmission);
   
   filtersInitialized = false;
@@ -425,6 +630,7 @@ void STM32_CAN::end()
   
   disableMBInterrupts();
 
+#if defined(HAL_CAN_MODULE_ENABLED)
   if (_can.handle.Instance == CAN1)
   {
     __HAL_RCC_CAN1_CLK_DISABLE();
@@ -445,6 +651,9 @@ void STM32_CAN::end()
   {
     __HAL_RCC_CAN3_CLK_DISABLE();
   }
+#endif
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+/** TODO: de-init FDCAN */
 #endif
 
   /** un-init pins, enable tx PULLUP for weak driving of recessive state */
@@ -482,33 +691,68 @@ void STM32_CAN::setBaudRate(uint32_t baud)
 void STM32_CAN::start()
 {
   // Initializes CAN
+#if defined(HAL_CAN_MODULE_ENABLED)
   HAL_CAN_Init( &_can.handle );
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_Init( &_can.handle );
+  HAL_FDCAN_ConfigExtendedIdMask(&_can.handle, extIdAndMask);
+  HAL_FDCAN_ConfigGlobalFilter(&_can.handle, this->actionStd, this->actionExt,
+    this->rejectStdRTR ? FDCAN_REJECT_REMOTE : FDCAN_FILTER_REMOTE,
+    this->rejectExtRTR ? FDCAN_REJECT_REMOTE : FDCAN_FILTER_REMOTE);
+  HAL_FDCAN_ConfigRxFifoOverwrite(&_can.handle,
+    FDCAN_RX_FIFO0, fifo0locked ? FDCAN_RX_FIFO_BLOCKING : FDCAN_RX_FIFO_OVERWRITE);
+  HAL_FDCAN_ConfigRxFifoOverwrite(&_can.handle,
+    FDCAN_RX_FIFO1, fifo1locked ? FDCAN_RX_FIFO_BLOCKING : FDCAN_RX_FIFO_OVERWRITE);
+
+  if(timestampCounterEnabled)
+    HAL_FDCAN_EnableTimestampCounter(&_can.handle, FDCAN_TIMESTAMP_INTERNAL);
+  else
+    HAL_FDCAN_DisableTimestampCounter(&_can.handle);
+#endif
   initializeFilters();
 
   // Start the CAN peripheral
+#if defined(HAL_CAN_MODULE_ENABLED)
   HAL_CAN_Start( &_can.handle );
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_Start( &_can.handle );
+#endif
 
   // Activate CAN notifications
+#if defined(HAL_CAN_MODULE_ENABLED)
   #if defined(STM32_CAN1_TX_RX0_BLOCKED_BY_USB) && defined(STM32_CAN_USB_WORKAROUND_POLLING)
   HAL_CAN_ActivateNotification( &_can.handle, CAN_IT_RX_FIFO1_MSG_PENDING);
   #else
   HAL_CAN_ActivateNotification( &_can.handle, CAN_IT_RX_FIFO0_MSG_PENDING);
   HAL_CAN_ActivateNotification( &_can.handle, CAN_IT_TX_MAILBOX_EMPTY);
   #endif
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_ActivateNotification( &_can.handle, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0 /*ignored arg for this event*/);
+  HAL_FDCAN_ActivateNotification( &_can.handle, FDCAN_IT_TX_FIFO_EMPTY, 0 /*ignored arg for this event*/);
+  #endif
 }
 
 void STM32_CAN::stop()
 {
+#if defined(HAL_CAN_MODULE_ENABLED)
   #if defined(STM32_CAN1_TX_RX0_BLOCKED_BY_USB) && defined(STM32_CAN_USB_WORKAROUND_POLLING)
   HAL_CAN_DeactivateNotification( &_can.handle, CAN_IT_RX_FIFO1_MSG_PENDING);
   #else
   HAL_CAN_DeactivateNotification( &_can.handle, CAN_IT_RX_FIFO0_MSG_PENDING);
   HAL_CAN_DeactivateNotification( &_can.handle, CAN_IT_TX_MAILBOX_EMPTY);
   #endif
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_DeactivateNotification( &_can.handle, FDCAN_IT_RX_FIFO0_NEW_MESSAGE);
+  HAL_FDCAN_DeactivateNotification( &_can.handle, FDCAN_IT_TX_FIFO_EMPTY);
+#endif
 
   /** Calls Stop internally, clears all errors */
+  #if defined(HAL_CAN_MODULE_ENABLED)
   HAL_CAN_DeInit( &_can.handle );
+  #elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_DeInit( &_can.handle );
+  #endif
 }
 
 
@@ -517,6 +761,7 @@ void STM32_CAN::stop()
  * -------------------------------------------------------------
  */
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 bool STM32_CAN::write(CAN_message_t &CAN_tx_msg, bool sendMB)
 {
   bool ret = true;
@@ -571,26 +816,109 @@ bool STM32_CAN::write(CAN_message_t &CAN_tx_msg, bool sendMB)
   return ret;
 }
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+
+static const uint8_t DLCtoLength[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
+static uint8_t lengthToDLC(uint8_t length)
+{
+  if(length <= 8)
+  {
+    return length;
+  }
+  else if(length <= 24)
+  {
+    return  8 + ((length-5) >> 2);
+  }
+  else
+  {
+    return (12 + ((length-1) >> 4)) & 0x0FUL;
+  }
+}
+
+bool STM32_CAN::write(CAN_message_t &CAN_tx_msg, bool sendMB)
+{
+  bool ret = true;
+  FDCAN_TxHeaderTypeDef TxHeader;
+  if(!_can.handle.Instance) return false;
+
+  __HAL_FDCAN_DISABLE_IT(&_can.handle, FDCAN_IT_TX_FIFO_EMPTY);
+
+  if (CAN_tx_msg.flags.extended)
+  {
+      TxHeader.Identifier = CAN_tx_msg.id & 0x1FFFFFFFU;
+      TxHeader.IdType   = FDCAN_EXTENDED_ID;
+  }
+  else
+  {
+      TxHeader.Identifier = CAN_tx_msg.id & 0x7FF;
+      TxHeader.IdType   = FDCAN_STANDARD_ID;
+  }
+
+  if (CAN_tx_msg.flags.remote)
+  {
+    TxHeader.TxFrameType = FDCAN_REMOTE_FRAME;
+    TxHeader.DataLength  = 0;
+  }
+  else{
+    TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    TxHeader.DataLength  = lengthToDLC(min(CAN_tx_msg.len, (uint8_t)8UL));
+  }
+
+  TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+  TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+  TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  TxHeader.MessageMarker = 0;
+
+  if(HAL_FDCAN_AddMessageToTxFifoQ( &_can.handle, &TxHeader, CAN_tx_msg.buf) != HAL_OK)
+  {
+    /* in normal situation we add up the message to TX ring buffer, if there is no free TX mailbox. But the TX mailbox interrupt is using this same function
+    to move the messages from ring buffer to empty TX mailboxes, so for that use case, there is this check */
+    if(sendMB != true)
+    {
+      if( addToRingBuffer(txRing, CAN_tx_msg) == false )
+      {
+        ret = false; // no more room
+      }
+    }
+    else { ret = false; }
+  }
+  __HAL_FDCAN_ENABLE_IT(&_can.handle, FDCAN_IT_TX_FIFO_EMPTY);
+  return ret;
+}
+#endif /* elif defined(HAL_FDCAN_MODULE_ENABLED) */
+
 bool STM32_CAN::read(CAN_message_t &CAN_rx_msg)
 {
   bool ret;
   if(!_can.handle.Instance) return false;
 
+#if defined(HAL_CAN_MODULE_ENABLED)
   #if defined(STM32_CAN1_TX_RX0_BLOCKED_BY_USB) && defined(STM32_CAN_USB_WORKAROUND_POLLING)
   __HAL_CAN_DISABLE_IT(&_can.handle, CAN_IT_RX_FIFO1_MSG_PENDING);
   #else
   __HAL_CAN_DISABLE_IT(&_can.handle, CAN_IT_RX_FIFO0_MSG_PENDING);
+  #endif
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  __HAL_FDCAN_DISABLE_IT(&_can.handle, FDCAN_IT_RX_FIFO0_NEW_MESSAGE);
 #endif
 
   ret = removeFromRingBuffer(rxRing, CAN_rx_msg);
 
+#if defined(HAL_CAN_MODULE_ENABLED)
   #if defined(STM32_CAN1_TX_RX0_BLOCKED_BY_USB) && defined(STM32_CAN_USB_WORKAROUND_POLLING)
   __HAL_CAN_ENABLE_IT(&_can.handle, CAN_IT_RX_FIFO1_MSG_PENDING);
   #else
   __HAL_CAN_ENABLE_IT(&_can.handle, CAN_IT_RX_FIFO0_MSG_PENDING);
+  #endif
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  __HAL_FDCAN_ENABLE_IT(&_can.handle, FDCAN_IT_RX_FIFO0_NEW_MESSAGE);
 #endif
   return ret;
 }
+
+
+#if defined(HAL_CAN_MODULE_ENABLED)
 
 uint8_t STM32_CAN::getFilterBankCount(IDE std_ext)
 {
@@ -791,6 +1119,161 @@ bool STM32_CAN::setFilterRaw(uint8_t bank_num, uint32_t id, uint32_t mask, uint3
   return (HAL_CAN_ConfigFilter( &_can.handle, &sFilterConfig ) == HAL_OK);
 }
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+
+uint8_t STM32_CAN::getFilterBankCount(IDE std_ext)
+{
+  if(_can.handle.Instance == nullptr) return 0;
+  if(std_ext == STD)
+    return _can.handle.Init.StdFiltersNbr;
+  else if(std_ext == EXT)
+    return _can.handle.Init.ExtFiltersNbr;
+  else
+    return 0;
+}
+
+
+bool STM32_CAN::setFilter(uint8_t bank_num, bool enabled, FILTER_ACTION action, IDE std_ext)
+{
+  uint32_t * pFilter;
+  uint32_t config = FDCAN_FILTER_DISABLE;
+  if(!_can.handle.Instance) return false;
+  if(enabled)
+  {
+    switch (action)
+    {
+    case STORE_FIFO0:
+      config = FDCAN_FILTER_TO_RXFIFO0;
+      break;
+    case STORE_FIFO1:
+      config = FDCAN_FILTER_TO_RXFIFO1;
+      break;
+    case REJECT:
+      config = FDCAN_FILTER_REJECT;
+      break;
+    case HIGH_PRIORITY:
+      config = FDCAN_FILTER_HP;
+      break;
+    case STORE_FIFO0_HIGH_PRIORITY:
+      config = FDCAN_FILTER_TO_RXFIFO0_HP;
+      break;
+    case STORE_FIFO1_HIGH_PRIORITY:
+      config = FDCAN_FILTER_TO_RXFIFO1_HP;
+      break;
+    default:
+      config = FDCAN_FILTER_DISABLE;
+      break;
+    }
+  }
+
+  switch (std_ext)
+  {
+    case STD:
+      if( bank_num >= _can.handle.Init.StdFiltersNbr) return false;
+      pFilter = (uint32_t *)(_can.handle.msgRam.StandardFilterSA + (bank_num * STM32_FDCAN_SF_Size));
+      pFilter[0] = (pFilter[0] & ~(STM32_FDCAN_SF_EC_Msk))
+                | ((config << (STM32_FDCAN_SF_EC_Pos)) & STM32_FDCAN_SF_EC_Msk);
+      break;
+    case EXT:
+      if( bank_num >= _can.handle.Init.ExtFiltersNbr) return false;
+      pFilter = (uint32_t *)(_can.handle.msgRam.ExtendedFilterSA + (bank_num * STM32_FDCAN_EF_Size));
+      pFilter[0] = (pFilter[0] & ~(STM32_FDCAN_EF_W0_EC_Msk))
+                | ((config << (STM32_FDCAN_EF_W0_EC_Pos)) & STM32_FDCAN_EF_W0_EC_Msk);
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
+
+bool STM32_CAN::setFilterSingleMask(uint8_t bank_num, uint32_t id, uint32_t mask, IDE std_ext, FILTER_ACTION action, bool enabled)
+{
+  return setFilterRaw(bank_num, id, mask, std_ext, FDCAN_FILTER_MASK, action, enabled);
+}
+
+/** NOTE: FDCAN does not support dual filter with different id types. std_ext1 has to be equal to std_ext2 */
+bool STM32_CAN::setFilterDualID(uint8_t bank_num, uint32_t id1, uint32_t id2, IDE std_ext1, IDE std_ext2, FILTER_ACTION action, bool enabled)
+{
+  bool std1 = (std_ext1 == STD || (std_ext1 == AUTO && id1 <= 0x7FFUL));
+  bool std2 = (std_ext2 == STD || (std_ext2 == AUTO && id2 <= 0x7FFUL));
+  if(std1 != std2)
+  {
+    core_debug("ERROR: Dual ID Filter have to use same ID type!\n");
+  }
+  return setFilterRaw(bank_num, id1, id2, std_ext1, FDCAN_FILTER_DUAL, action, enabled);
+}
+
+bool STM32_CAN::setFilterRange(uint8_t bank_num, uint32_t id1, uint32_t id2, IDE std_ext, FILTER_ACTION action, bool enabled, bool nEIDM)
+{
+  bool std = (std_ext == STD || (std_ext == AUTO && id1 <= 0x7FFUL && id2 <= 0x7FFUL));
+  if(std && nEIDM)
+  {
+    core_debug("ERROR: Can not apply extended ID and mask register with standard ids!\n");
+    nEIDM = false;
+  }
+  return setFilterRaw(bank_num, id1, id2, std_ext, nEIDM ? FDCAN_FILTER_RANGE_NO_EIDM : FDCAN_FILTER_RANGE, action, enabled);
+}
+
+bool STM32_CAN::setFilterRaw(uint8_t bank_num, uint32_t id, uint32_t mask, IDE std_ext, uint32_t filter_type, FILTER_ACTION action, bool enabled)
+{
+  FDCAN_FilterTypeDef sFilterConfig;
+  if(!_can.handle.Instance) return false;
+
+  sFilterConfig.FilterIndex = bank_num;
+  sFilterConfig.FilterType = filter_type;
+
+  sFilterConfig.FilterConfig = FDCAN_FILTER_DISABLE;
+  if(enabled) {
+    switch(action)
+    {
+      case STORE_FIFO0:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+        break;
+      case STORE_FIFO1:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+        break;
+      case REJECT:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_REJECT;
+        break;
+      case HIGH_PRIORITY:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_HP;
+        break;
+      case STORE_FIFO0_HIGH_PRIORITY:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0_HP;
+        break;
+      case STORE_FIFO1_HIGH_PRIORITY:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1_HP;
+        break;
+    }
+  }
+
+  if (std_ext == STD || (std_ext == AUTO && id <= 0x7FFUL))
+  {
+    if( bank_num >= _can.handle.Init.StdFiltersNbr) return false;
+    /** Unapplicable filter type for standard filters, set to normal range */
+    if(sFilterConfig.FilterType == FDCAN_FILTER_RANGE_NO_EIDM)
+    {
+      sFilterConfig.FilterType = FDCAN_FILTER_RANGE;
+    }
+    sFilterConfig.IdType = FDCAN_STANDARD_ID;
+    /** Mask relevant bits in case user supplies wider mask than allowed (HAL does not mask) */
+    sFilterConfig.FilterID1 = id   & 0x7FFUL;
+    sFilterConfig.FilterID2 = mask & 0x7FFUL;
+  }
+  else
+  {
+    if( bank_num >= _can.handle.Init.ExtFiltersNbr) return false;
+    sFilterConfig.IdType = FDCAN_EXTENDED_ID;
+    /** Mask relevant bits in case user supplies wider mask than allowed (HAL does not mask) */
+    sFilterConfig.FilterID1 = id   & 0x1FFFFFFFUL;
+    sFilterConfig.FilterID2 = mask & 0x1FFFFFFFUL;
+  }
+
+  return (HAL_FDCAN_ConfigFilter( &_can.handle, &sFilterConfig ) == HAL_OK);
+}
+
+#endif /* elif defined(HAL_FDCAN_MODULE_ENABLED) */
+
 
 /**-------------------------------------------------------------
  *     Teensy FlexCAN compatibility functions
@@ -804,10 +1287,23 @@ void STM32_CAN::setMBFilter(CAN_BANK bank_num, CAN_FLTEN input)
 
 void STM32_CAN::setMBFilter(CAN_FLTEN input)
 {
+#if defined(HAL_CAN_MODULE_ENABLED)
   for (uint8_t bank_num = 0 ; bank_num < STM32_CAN_SINGLE_CAN_FILTER_COUNT ; bank_num++)
   {
     setFilter(bank_num, (input == ACCEPT_ALL));
   }
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  /** NOTE: this does overwrite the filter action with default, but this lagecy API
+   *  does not allow setting FIFO target, so default would be uses anyway*/
+  for (uint8_t bank_num = 0 ; bank_num < _can.handle.Init.StdFiltersNbr ; bank_num++)
+  {
+    setFilter(bank_num, (input == ACCEPT_ALL));
+  }
+  for (uint8_t bank_num = 0 ; bank_num < _can.handle.Init.ExtFiltersNbr ; bank_num++)
+  {
+    setFilter(bank_num, (input == ACCEPT_ALL), CAN_FILTER_DEFAULT_ACTION, EXT);
+  }
+#endif
 }
 
 bool STM32_CAN::setMBFilterProcessing(CAN_BANK bank_num, uint32_t filter_id, uint32_t mask, IDE std_ext)
@@ -832,6 +1328,8 @@ void STM32_CAN::initializeFilters()
   if(filtersInitialized) return;
   filtersInitialized = true;
 
+#if defined(HAL_CAN_MODULE_ENABLED)
+
   /** Let everything in by default */
   setFilterRaw(0, 0UL, 0UL, CAN_FILTERMODE_IDMASK, CAN_FILTERSCALE_32BIT,
     FILTER_ACTION::CAN_FILTER_DEFAULT_ACTION, true);
@@ -841,7 +1339,24 @@ void STM32_CAN::initializeFilters()
   {
     setFilter(bank_num, false);
   }
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  /** Let everything in by default */
+  setFilterSingleMask(0, 0UL, 0UL, STD);
+  setFilterSingleMask(0, 0UL, 0UL, EXT);
+
+  /** turn off all other filters that might sill be setup from before */
+  for (uint8_t bank_num = 1 ; bank_num < _can.handle.Init.StdFiltersNbr ; bank_num++)
+  {
+    setFilter(bank_num, false);
+  }
+  for (uint8_t bank_num = 1 ; bank_num < _can.handle.Init.ExtFiltersNbr ; bank_num++)
+  {
+    setFilter(bank_num, false, CAN_FILTER_DEFAULT_ACTION, EXT);
+  }
+#endif
 }
+
 
 void STM32_CAN::initializeBuffers()
 {
@@ -941,6 +1456,7 @@ uint32_t STM32_CAN::ringBufferCount(RingbufferTypeDef &ring)
     return((uint32_t)entries);
 }
 
+#if defined(HAL_CAN_MODULE_ENABLED)
 void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1,
                                   uint8_t timeseg2, uint8_t sjw)
 {
@@ -1068,6 +1584,21 @@ void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1,
   _can.handle.Init.Prescaler = _Prescaler;
 }
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1, uint8_t timeseg2, uint8_t sjw)
+{
+  _can.handle.Init.NominalPrescaler = prescaler;
+  _can.handle.Init.NominalSyncJumpWidth = sjw;
+  _can.handle.Init.NominalTimeSeg1 = timeseg1;
+  _can.handle.Init.NominalTimeSeg2 = timeseg2;
+  /** NOTE: Bitrate switching not supported yet. Values are unuesd in non switched modes. */
+  _can.handle.Init.DataPrescaler = 1;
+  _can.handle.Init.DataSyncJumpWidth = 1;
+  _can.handle.Init.DataTimeSeg1 = 1;
+  _can.handle.Init.DataTimeSeg2 = 1;
+}
+#endif
+
 template <typename T, size_t N>
 bool STM32_CAN::lookupBaudrate(int baud, const T(&table)[N]) {
   for (size_t i = 0; i < N; i++) {
@@ -1109,7 +1640,12 @@ bool STM32_CAN::calculateBaudrate(int baud)
    *
    * for more details + justification, see: https://github.com/pazi88/STM32_CAN/pull/41
    */
-  for (prescaler = 1; prescaler <= 1024; prescaler += 1) {
+#if defined(HAL_CAN_MODULE_ENABLED)
+  for (prescaler = 1; prescaler <= 1024; prescaler += 1)
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  for (prescaler = 1; prescaler <= 512; prescaler += 1)
+#endif
+  {
     const uint32_t can_freq = frequency / prescaler;
     const uint32_t baud_min = can_freq / (1 + 5 + 16);
 
@@ -1134,9 +1670,16 @@ bool STM32_CAN::calculateBaudrate(int baud)
 
 uint32_t STM32_CAN::getCanPeripheralClock()
 {
+#if defined(HAL_CAN_MODULE_ENABLED)
   //All bxCAN get clocked by APB1 / PCLK1
   return HAL_RCC_GetPCLK1Freq();
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  return HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_FDCAN);
+#endif
 }
+
+
+#if defined(HAL_CAN_MODULE_ENABLED)
 
 void STM32_CAN::enableMBInterrupts()
 {
@@ -1206,6 +1749,91 @@ void STM32_CAN::disableMBInterrupts()
 #endif
 }
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+
+#if defined(STM32G0xx)
+void STM32_CAN::enableMBInterrupts()
+{
+  if (_can.handle.Instance == FDCAN1)
+  {
+    phfdcan1 = &_can.handle;
+    HAL_NVIC_EnableIRQ(TIM16_FDCAN_IT0_IRQn);
+  }
+#ifdef FDCAN2
+  else if (_can.handle.Instance == FDCAN2)
+  {
+    phfdcan2 = &_can.handle;
+    HAL_NVIC_EnableIRQ(TIM16_FDCAN_IT0_IRQn);
+  }
+#endif
+}
+
+void STM32_CAN::disableMBInterrupts()
+{
+  if (_can.handle.Instance == FDCAN1)
+  {
+    phfdcan1 = nullptr;
+    /** NOTE: If timer is used and de-init with timerHandleDeinit() 
+     * this IRQ is disabled even if phfdcan1 is still set, crippeling the FDCAN.
+     * we try to be nice here and only disable IRQ if nothing else is using it anymore */
+    if(!HardwareTimer_Handle[TIMER16_INDEX] && !phfdcan2)
+      HAL_NVIC_DisableIRQ(TIM16_FDCAN_IT0_IRQn);
+  }
+#ifdef FDCAN2
+  else if (_can.handle.Instance == FDCAN2)
+  {
+    phfdcan2 = nullptr;
+    if(!HardwareTimer_Handle[TIMER16_INDEX] && !phfdcan1)
+      HAL_NVIC_DisableIRQ(TIM16_FDCAN_IT0_IRQn);
+  }
+#endif
+}
+
+#else /* defined(STM32G0xx) */
+
+void STM32_CAN::enableMBInterrupts()
+{
+  if (_can.handle.Instance == FDCAN1)
+  {
+    HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
+  }
+#ifdef FDCAN2
+  else if (_can.handle.Instance == FDCAN2)
+  {
+    HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
+  }
+#endif
+#ifdef FDCAN3
+  else if (_can.handle.Instance == FDCAN3)
+  {
+    HAL_NVIC_EnableIRQ(FDCAN3_IT0_IRQn);
+  }
+#endif
+}
+
+void STM32_CAN::disableMBInterrupts()
+{
+  if (_can.handle.Instance == FDCAN1)
+  {
+    HAL_NVIC_DisableIRQ(FDCAN1_IT0_IRQn);
+  }
+#ifdef FDCAN2
+  else if (_can.handle.Instance == FDCAN2)
+  {
+    HAL_NVIC_DisableIRQ(FDCAN1_IT0_IRQn);
+  }
+#endif
+#ifdef FDCAN3
+  else if (_can.handle.Instance == FDCAN3)
+  {
+    HAL_NVIC_DisableIRQ(FDCAN3_IT0_IRQn);
+  }
+#endif
+}
+#endif /* else defined(STM32G0xx) */
+#endif /* defined(HAL_FDCAN_MODULE_ENABLED) */
+
+
 void STM32_CAN::enableFIFO(bool status)
 {
   //Nothing to do here. The FIFO is on by default. This is just to work with code made for Teensy FlexCan.
@@ -1215,6 +1843,7 @@ void STM32_CAN::enableFIFO(bool status)
 /* Interrupt functions
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 */
+#if defined(HAL_CAN_MODULE_ENABLED)
 // There is 3 TX mailboxes. Each one has own transmit complete callback function, that we use to pull next message from TX ringbuffer to be sent out in TX mailbox.
 extern "C" void HAL_CAN_TxMailbox0CompleteCallback( CAN_HandleTypeDef *CanHandle )
 {
@@ -1298,8 +1927,66 @@ extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *CanHandle)
   //Enable_Interrupts(state);
 }
 
-#ifdef CAN1_IRQHandler_AIO
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
 
+void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef *FDCanHandle, uint32_t BufferIndexes)
+{
+  (void)BufferIndexes;
+
+  stm32_can_t * canObj = get_can_obj(FDCanHandle);
+  STM32_CAN * _can = (STM32_CAN *)canObj->__this;
+
+  CAN_message_t txmsg;
+  if (_can->removeFromRingBuffer(_can->txRing, txmsg))
+  {
+    _can->write(txmsg, true);
+  }
+}
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *FDCanHandle, uint32_t RxFifo0ITs)
+{
+  CAN_message_t rxmsg;
+  FDCAN_RxHeaderTypeDef   RxHeader;
+  stm32_can_t * canObj = get_can_obj(FDCanHandle);
+  STM32_CAN * _can = (STM32_CAN *)canObj->__this;
+  rxmsg.bus = canObj->bus;
+
+  if(RxFifo0ITs & FDCAN_IR_RF0N) //New message
+  {
+
+    do
+    {
+      if (HAL_FDCAN_GetRxMessage(FDCanHandle, FDCAN_RX_FIFO0, &RxHeader, rxmsg.buf) == HAL_OK)
+      {
+        if ( RxHeader.IdType == FDCAN_STANDARD_ID )
+        {
+          rxmsg.id = RxHeader.Identifier;
+          rxmsg.flags.extended = 0;
+        }
+        else
+        {
+          rxmsg.id = RxHeader.Identifier;
+          rxmsg.flags.extended = 1;
+        }
+
+        rxmsg.flags.remote = RxHeader.RxFrameType == FDCAN_REMOTE_FRAME;
+        rxmsg.mb           = RxHeader.FilterIndex;
+        rxmsg.timestamp    = RxHeader.RxTimestamp;
+        /** NOTE: DataLength contains DLC code not length in bytes */
+        rxmsg.len          = DLCtoLength[RxHeader.DataLength];
+
+        _can->addToRingBuffer(_can->rxRing, rxmsg);
+      }
+    } while(HAL_FDCAN_GetRxFifoFillLevel(FDCanHandle, FDCAN_RX_FIFO0));
+  }
+}
+
+#endif /* defined(HAL_FDCAN_MODULE_ENABLED) */
+
+
+#if defined(HAL_CAN_MODULE_ENABLED)
+
+#ifdef CAN1_IRQHandler_AIO
 extern "C" void CAN1_IRQHandler_AIO(void)
 {
   if(canObj[CAN1_INDEX]) {
@@ -1377,3 +2064,58 @@ extern "C" void CAN3_TX_IRQHandler(void)
 
 #endif /* CAN1_IRQHandler_AIO */
 
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+
+#if defined(STM32G0xx)
+    /** NOTE: no irq handlers defined here. They are defined already in
+     * HardwareTimer.cpp of STM32 Arduino core
+     * since they are shared with 2 Timer peripherals.
+     * Those already take care of calling the HAL handlers.
+     */
+
+#else /* defined(STM32G0xx) */
+
+extern "C" void FDCAN1_IT0_IRQHandler(void)
+{
+  if(canObj[CAN1_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN1_INDEX]->handle);
+  }
+}
+extern "C" void FDCAN1_IT1_IRQHandler(void)
+{
+  if(canObj[CAN1_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN1_INDEX]->handle);
+  }
+}
+#ifdef FDCAN2
+extern "C" void FDCAN2_IT0_IRQHandler(void)
+{
+  if(canObj[CAN2_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN2_INDEX]->handle);
+  }
+}
+extern "C" void FDCAN2_IT1_IRQHandler(void)
+{
+  if(canObj[CAN2_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN2_INDEX]->handle);
+  }
+}
+#endif
+#ifdef FDCAN3
+extern "C" void FDCAN3_IT0_IRQHandler(void)
+{
+  if(canObj[CAN3_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN3_INDEX]->handle);
+  }
+}
+extern "C" void FDCAN3_IT1_IRQHandler(void)
+{
+  if(canObj[CAN3_INDEX]) {
+    HAL_FDCAN_IRQHandler(&canObj[CAN3_INDEX]->handle);
+  }
+}
+#endif
+
+#endif /* else defined(STM32G0xx) */
+
+#endif /* defined(HAL_FDCAN_MODULE_ENABLED) */
