@@ -49,6 +49,8 @@ FDCAN_HandleTypeDef *phfdcan2 = nullptr;
 
 #endif
 
+#define STM32_CAN_TIMEOUT_VALUE 10U
+
 //Max value, lowest priority
 #define MAX_IRQ_PRIO_VALUE ((1UL << __NVIC_PRIO_BITS) - 1UL)
 
@@ -616,7 +618,11 @@ void STM32_CAN::begin( bool retransmission ) {
   filtersInitialized = false;
 
   //try to start in case baudrate was set earlier
-  setBaudRate(baudrate);
+  if(!calculateBaudrate( baudrate ))
+  {
+    return;
+  }
+  start();
 }
 
 void STM32_CAN::end()
@@ -697,9 +703,102 @@ void STM32_CAN::setBaudRate(uint32_t baud)
     return;
   }
 
-  // (re)-start
-  stop();
-  start();
+  /** just update baudrate regs if running */
+#if defined(HAL_CAN_MODULE_ENABLED)
+  HAL_CAN_StateTypeDef state = HAL_CAN_GetState(&_can.handle);
+  if (  (state == HAL_CAN_STATE_READY)
+     || (state == HAL_CAN_STATE_LISTENING))
+
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  HAL_FDCAN_StateTypeDef state = HAL_FDCAN_GetState(&_can.handle);
+  if (  (state == HAL_FDCAN_STATE_READY)
+     || (state == HAL_FDCAN_STATE_BUSY))
+#endif
+  {
+    updateBaudrateRegisters();
+  }
+  else
+  {
+    start();
+  }
+}
+
+bool STM32_CAN::updateBaudrateRegisters()
+{
+  if(!_can.handle.Instance) return false;
+  uint32_t tickstart;
+  
+#if defined(HAL_CAN_MODULE_ENABLED)
+  bool wasStarted = !(_can.handle.Instance->MCR & CAN_MCR_INRQ);
+
+  /* Request initialisation */
+  SET_BIT(_can.handle.Instance->MCR, CAN_MCR_INRQ);
+  /* Get tick */
+  tickstart = HAL_GetTick();
+
+  /* Wait initialisation acknowledge */
+  while ((_can.handle.Instance->MSR & CAN_MSR_INAK) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > STM32_CAN_TIMEOUT_VALUE)
+    {
+      return false;
+    }
+  }
+
+    /* Set the bit timing register */
+  WRITE_REG(_can.handle.Instance->BTR, (uint32_t)(_can.handle.Init.Mode           |
+                                                  _can.handle.Init.SyncJumpWidth  |
+                                                  _can.handle.Init.TimeSeg1       |
+                                                  _can.handle.Init.TimeSeg2       |
+                                                  (_can.handle.Init.Prescaler - 1U)));
+  if(wasStarted)
+  {
+  /* Request leave initialisation */
+    CLEAR_BIT(_can.handle.Instance->MCR, CAN_MCR_INRQ);
+  }
+  
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  bool wasStarted = !(_can.handle.Instance->CCCR & FDCAN_CCCR_INIT);
+
+  /* Request initialisation */
+  SET_BIT(_can.handle.Instance->CCCR, FDCAN_CCCR_INIT);
+
+  tickstart = HAL_GetTick();
+  /* Wait until the INIT bit into CCCR register is set */
+  while ((_can.handle.Instance->CCCR & FDCAN_CCCR_INIT) == 0U)
+  {
+    /* Check for the Timeout */
+    if ((HAL_GetTick() - tickstart) > STM32_CAN_TIMEOUT_VALUE)
+    {
+      return false;
+    }
+  }
+
+  /* Enable configuration change */
+  SET_BIT(_can.handle.Instance->CCCR, FDCAN_CCCR_CCE);
+
+    /* Set the nominal bit timing register */
+  _can.handle.Instance->NBTP = ((((uint32_t)_can.handle.Init.NominalSyncJumpWidth - 1U) << FDCAN_NBTP_NSJW_Pos) | \
+                            (((uint32_t)_can.handle.Init.NominalTimeSeg1 - 1U) << FDCAN_NBTP_NTSEG1_Pos)    | \
+                            (((uint32_t)_can.handle.Init.NominalTimeSeg2 - 1U) << FDCAN_NBTP_NTSEG2_Pos)    | \
+                            (((uint32_t)_can.handle.Init.NominalPrescaler - 1U) << FDCAN_NBTP_NBRP_Pos));
+
+  /* If FD operation with BRS is selected, set the data bit timing register */
+  if (_can.handle.Init.FrameFormat == FDCAN_FRAME_FD_BRS)
+  {
+    _can.handle.Instance->DBTP = ((((uint32_t)_can.handle.Init.DataSyncJumpWidth - 1U) << FDCAN_DBTP_DSJW_Pos)  | \
+                              (((uint32_t)_can.handle.Init.DataTimeSeg1 - 1U) << FDCAN_DBTP_DTSEG1_Pos)     | \
+                              (((uint32_t)_can.handle.Init.DataTimeSeg2 - 1U) << FDCAN_DBTP_DTSEG2_Pos)     | \
+                              (((uint32_t)_can.handle.Init.DataPrescaler - 1U) << FDCAN_DBTP_DBRP_Pos));
+  }
+
+  if(wasStarted)
+  {
+    /* Request leave initialisation */
+    CLEAR_BIT(_can.handle.Instance->CCCR, FDCAN_CCCR_INIT);
+  }
+#endif
+  return true;
 }
 
 void STM32_CAN::start()

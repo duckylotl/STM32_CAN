@@ -497,6 +497,7 @@ class STM32_CAN {
     bool      allocatePeripheral(void);
     bool      freePeripheral(void);
     bool      hasPeripheral(void);
+    bool      updateBaudrateRegisters(void);
     void      start(void);
     void      stop(void);
     void      initializeFilters();
