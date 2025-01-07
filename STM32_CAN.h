@@ -384,6 +384,11 @@ class STM32_CAN {
     /** Valid actions only STORE_FIFO0, STORE_FIFO1, REJECT */
     void setFilterGlobalNonMatching(FILTER_ACTION actionStd, FILTER_ACTION actionExt);
     void setFilterGlobalRTR(bool rejectStdRTR, bool rejectExtRTR);
+
+    /** Set common clock divider. Applies to all FDCAN instances. 
+     * Does only update right away while FDCAN1 is inactive (not called begin() yet).
+     * Otherwise setting will be applied once FDCAN1 is restarted (end()/begin()). */
+    static void setCommonClockDiv(uint8_t div);
 #endif
     
 /**-------------------------------------------------------------
@@ -562,6 +567,8 @@ class STM32_CAN {
     uint32_t baudrate;
     
 #if defined(HAL_FDCAN_MODULE_ENABLED)
+    static uint32_t commonClockDivRegValue;
+
     bool timestampCounterEnabled;
     bool fifo0locked;
     bool fifo1locked;

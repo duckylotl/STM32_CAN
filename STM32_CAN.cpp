@@ -73,6 +73,11 @@ typedef enum {
   CAN_UNKNOWN = 0xFFFF
 } can_index_t;
 
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+uint32_t STM32_CAN::commonClockDivRegValue = FDCAN_CLOCK_DIV1;
+#endif
+
 static stm32_can_t * canObj[CAN_NUM] = {NULL};
 
 #if defined(HAL_CAN_MODULE_ENABLED)
@@ -295,7 +300,7 @@ void STM32_CAN::init(void)
   _can.handle.Init.AutoWakeUp = DISABLE;
 
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-  _can.handle.Init.ClockDivider = FDCAN_CLOCK_DIV1;
+  _can.handle.Init.ClockDivider = commonClockDivRegValue;
 
   setFrameFormat(CLASSIC);
   setRxFIFOLock(false, false);
@@ -464,6 +469,29 @@ void STM32_CAN::setFilterGlobalRTR(bool rejectStdRTR, bool rejectExtRTR)
 {
   this->rejectStdRTR = rejectStdRTR;
   this->rejectExtRTR = rejectExtRTR;
+}
+
+void STM32_CAN::setCommonClockDiv(uint8_t div)
+{
+  commonClockDivRegValue = (div >> 1) & 0x0FUL; //divider is reg*2, div/1 is 0
+
+  /* in case FDCAN1 was already initialized directly apply to init values
+   * Prescaler value will be updated by HAL when FDCAN1 begin() is called. */
+  if(canObj[CAN1_INDEX])
+  {
+    canObj[CAN1_INDEX]->handle.Init.ClockDivider = commonClockDivRegValue;
+  }
+  /** Also directly update prescaler value in case FDCAN1 is not running
+   * This should allow setting the prescaler value for use with other FDCAN instance than FDCAN1
+   * In case its running we can't do anything without disturbing FDCAN1, up to user to restart FDCAN1.
+   */
+  if((FDCAN1->CCCR & FDCAN_CCCR_INIT))
+  {
+    /* Enable configuration change */
+    SET_BIT(FDCAN1->CCCR, FDCAN_CCCR_CCE);
+
+    FDCAN_CONFIG->CKDIV = commonClockDivRegValue;
+  }
 }
 
 #endif
@@ -1787,7 +1815,14 @@ uint32_t STM32_CAN::getCanPeripheralClock()
   //All bxCAN get clocked by APB1 / PCLK1
   return HAL_RCC_GetPCLK1Freq();
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-  return HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_FDCAN);
+  uint32_t div = (FDCAN_CONFIG->CKDIV & FDCAN_CKDIV_PDIV_Msk) >> FDCAN_CKDIV_PDIV_Pos;
+  //decode register value to devider
+  if(!div)
+    div = 1;
+  else
+    div <<= 1;
+
+  return HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_FDCAN) / div;
 #endif
 }
 
