@@ -310,6 +310,9 @@ class STM32_CAN {
       HIGH_PRIORITY, /** No storage, just set IRQ flag*/
       STORE_FIFO0_HIGH_PRIORITY,
       STORE_FIFO1_HIGH_PRIORITY,
+      #ifdef FDCAN_FILTER_TO_RXBUFFER
+      STORE_RX_BUFFER,
+      #endif
       #endif
     };
 
@@ -443,6 +446,9 @@ class STM32_CAN {
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
     /** nEIDM only relevant for ext ID filters. If true will not use the global Ext Id And Mask with this filter. */
     bool setFilterRange   (uint8_t bank_num, uint32_t id1, uint32_t id2,  IDE std_ext, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true, bool nEIDM = false);
+    #ifdef FDCAN_FILTER_TO_RXBUFFER
+    bool setFilterSingleRxBuf(uint8_t bank_num, uint32_t id, IDE std_ext, uint8_t buf_index, bool cal_msg = false, bool enabled = true);
+    #endif
     bool setFilterRaw     (uint8_t bank_num, uint32_t id,  uint32_t mask, IDE std_ext, uint32_t filter_type, FILTER_ACTION action = CAN_FILTER_DEFAULT_ACTION, bool enabled = true);
 #endif
 

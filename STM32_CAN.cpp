@@ -1366,6 +1366,11 @@ bool STM32_CAN::setFilter(uint8_t bank_num, bool enabled, FILTER_ACTION action, 
     case STORE_FIFO1_HIGH_PRIORITY:
       config = FDCAN_FILTER_TO_RXFIFO1_HP;
       break;
+  #ifdef FDCAN_FILTER_TO_RXBUFFER
+    case STORE_RX_BUFFER:
+      config = FDCAN_FILTER_TO_RXBUFFER;
+      break;
+  #endif
     default:
       config = FDCAN_FILTER_DISABLE;
       break;
@@ -1420,6 +1425,17 @@ bool STM32_CAN::setFilterRange(uint8_t bank_num, uint32_t id1, uint32_t id2, IDE
   return setFilterRaw(bank_num, id1, id2, std_ext, nEIDM ? FDCAN_FILTER_RANGE_NO_EIDM : FDCAN_FILTER_RANGE, action, enabled);
 }
 
+#ifdef FDCAN_FILTER_TO_RXBUFFER
+bool STM32_CAN::setFilterSingleRxBuf(uint8_t bank_num, uint32_t id, IDE std_ext, uint8_t buf_index, bool cal_msg, bool enabled)
+{
+  /** special filter type, re-using some non-used args for other purposes
+   * mask -> buf_index
+   * cal_msg -> filter_mode (using FDCAN_FILTER_RANGE to encode normal messages)
+   */
+  return setFilterRaw(bank_num, id, buf_index, std_ext, cal_msg ? FDCAN_FILTER_DUAL : FDCAN_FILTER_RANGE, STORE_RX_BUFFER, enabled);
+}
+#endif
+
 bool STM32_CAN::setFilterRaw(uint8_t bank_num, uint32_t id, uint32_t mask, IDE std_ext, uint32_t filter_type, FILTER_ACTION action, bool enabled)
 {
   FDCAN_FilterTypeDef sFilterConfig;
@@ -1450,6 +1466,18 @@ bool STM32_CAN::setFilterRaw(uint8_t bank_num, uint32_t id, uint32_t mask, IDE s
       case STORE_FIFO1_HIGH_PRIORITY:
         sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO1_HP;
         break;
+    #ifdef FDCAN_FILTER_TO_RXBUFFER
+      case STORE_RX_BUFFER:
+        sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXBUFFER;
+        /** Special filter type, use mask input as buffer index,
+         * using filter type to specify cal message arg
+         * FilterID2 and FilterType are ignored by HAL in this case
+         */
+        sFilterConfig.RxBufferIndex = mask;
+        sFilterConfig.IsCalibrationMsg = (filter_type == FDCAN_FILTER_RANGE)? 0UL : 1UL;
+        if(sFilterConfig.RxBufferIndex >= _can.handle.Init.RxBuffersNbr) return false;
+        break;
+    #endif
     }
   }
 
