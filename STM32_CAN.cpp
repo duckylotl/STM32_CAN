@@ -1067,16 +1067,27 @@ bool STM32_CAN::write(CAN_message_t &CAN_tx_msg, bool sendMB)
   }
   else{
     TxHeader.TxFrameType = FDCAN_DATA_FRAME;
-    TxHeader.DataLength  = lengthToDLC(min(CAN_tx_msg.len, (uint8_t)8UL));
+    TxHeader.DataLength  = lengthToDLC(CAN_tx_msg.len);
   }
 
   TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-  TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+  TxHeader.FDFormat      = CAN_tx_msg.flags.fd_frame      ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN;
+  TxHeader.BitRateSwitch = CAN_tx_msg.flags.fd_rateswitch ? FDCAN_BRS_ON : FDCAN_BRS_OFF; 
   TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
   TxHeader.MessageMarker = 0;
 
-  if(HAL_FDCAN_AddMessageToTxFifoQ( &_can.handle, &TxHeader, CAN_tx_msg.buf) != HAL_OK)
+  /** check for nonsensical combinations */
+  if(  (_can.handle.Init.FrameFormat == FRAME_FORMAT::CLASSIC
+        && ( CAN_tx_msg.flags.fd_frame ||  CAN_tx_msg.flags.fd_rateswitch || CAN_tx_msg.len > 8))
+    || (_can.handle.Init.FrameFormat != FRAME_FORMAT::CLASSIC
+        && (!CAN_tx_msg.flags.fd_frame && (CAN_tx_msg.flags.fd_rateswitch || CAN_tx_msg.len > 8)))
+    || (_can.handle.Init.FrameFormat == FRAME_FORMAT::FD_NO_BRS && CAN_tx_msg.flags.fd_rateswitch)
+  )
+  {
+    ret = false;
+  }
+
+  if(ret && HAL_FDCAN_AddMessageToTxFifoQ( &_can.handle, &TxHeader, CAN_tx_msg.buf) != HAL_OK)
   {
     /* in normal situation we add up the message to TX ring buffer, if there is no free TX mailbox. But the TX mailbox interrupt is using this same function
     to move the messages from ring buffer to empty TX mailboxes, so for that use case, there is this check */
@@ -2215,6 +2226,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *FDCanHandle, uint32_t RxFifo
         }
 
         rxmsg.flags.remote = RxHeader.RxFrameType == FDCAN_REMOTE_FRAME;
+        rxmsg.flags.fd_rateswitch = RxHeader.BitRateSwitch == FDCAN_BRS_ON;
+        rxmsg.flags.fd_frame      = RxHeader.FDFormat      == FDCAN_FD_CAN;
         rxmsg.mb           = RxHeader.FilterIndex;
         rxmsg.timestamp    = RxHeader.RxTimestamp;
         /** NOTE: DataLength contains DLC code not length in bytes */

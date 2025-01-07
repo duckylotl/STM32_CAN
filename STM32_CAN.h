@@ -176,6 +176,8 @@ typedef struct CAN_message_t {
     bool remote = 0;       // remote transmission request packet type
     bool overrun = 0;      // message overrun
     bool reserved = 0;
+    bool fd_frame = false;
+    bool fd_rateswitch = false;
   } flags;
   uint8_t len = 8;         // length of data
 #if defined(HAL_CAN_MODULE_ENABLED)
