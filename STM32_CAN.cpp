@@ -300,7 +300,9 @@ void STM32_CAN::init(void)
   _can.handle.Init.AutoWakeUp = DISABLE;
 
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
+  #ifndef STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
   _can.handle.Init.ClockDivider = commonClockDivRegValue;
+  #endif
 
   setFrameFormat(CLASSIC);
   setRxFIFOLock(false, false);
@@ -477,10 +479,13 @@ void STM32_CAN::setCommonClockDiv(uint8_t div)
 
   /* in case FDCAN1 was already initialized directly apply to init values
    * Prescaler value will be updated by HAL when FDCAN1 begin() is called. */
+  #ifndef STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
+  /** if CCU is present, clockdiv get initialized differently */
   if(canObj[CAN1_INDEX])
   {
     canObj[CAN1_INDEX]->handle.Init.ClockDivider = commonClockDivRegValue;
   }
+  #endif
   /** Also directly update prescaler value in case FDCAN1 is not running
    * This should allow setting the prescaler value for use with other FDCAN instance than FDCAN1
    * In case its running we can't do anything without disturbing FDCAN1, up to user to restart FDCAN1.
@@ -490,7 +495,14 @@ void STM32_CAN::setCommonClockDiv(uint8_t div)
     /* Enable configuration change */
     SET_BIT(FDCAN1->CCCR, FDCAN_CCCR_CCE);
 
+    #ifdef STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
+    /** Bypass clock calibration unit */
+    SET_BIT(FDCAN_CCU->CCFG, FDCANCCU_CCFG_BCC);
+    /** NOTE: Clock calibration value has CDIV at different location, but with same encoding */
+    MODIFY_REG(FDCAN_CCU->CCFG, FDCANCCU_CCFG_CDIV, (commonClockDivRegValue << FDCANCCU_CCFG_CDIV_Pos));
+    #else
     FDCAN_CONFIG->CKDIV = commonClockDivRegValue;
+    #endif
   }
 }
 
@@ -850,7 +862,20 @@ void STM32_CAN::start()
     HAL_FDCAN_EnableTimestampCounter(&_can.handle, FDCAN_TIMESTAMP_INTERNAL);
   else
     HAL_FDCAN_DisableTimestampCounter(&_can.handle);
+
+  #ifdef STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
+  /** Don't use Clock Calibration Unit, just set the prescaler */
+  FDCAN_ClkCalUnitTypeDef CCU_conf;
+  CCU_conf.ClockCalibration = FDCAN_CLOCK_CALIBRATION_DISABLE;
+  CCU_conf.ClockDivider = commonClockDivRegValue;
+  CCU_conf.MinOscClkPeriods = 0;
+  CCU_conf.CalFieldLength = FDCAN_CALIB_FIELD_LENGTH_32;
+  CCU_conf.TimeQuantaPerBitTime = 4;
+  CCU_conf.WatchdogStartValue = 0;
+  HAL_FDCAN_ConfigClockCalibration(&_can.handle, &CCU_conf);
+  #endif
 #endif
+
   initializeFilters();
 
   // Start the CAN peripheral
@@ -1815,7 +1840,11 @@ uint32_t STM32_CAN::getCanPeripheralClock()
   //All bxCAN get clocked by APB1 / PCLK1
   return HAL_RCC_GetPCLK1Freq();
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
+  #ifdef STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
+  uint32_t div = (FDCAN_CCU->CCFG & FDCANCCU_CCFG_CDIV) >> FDCANCCU_CCFG_CDIV_Pos;
+  #else
   uint32_t div = (FDCAN_CONFIG->CKDIV & FDCAN_CKDIV_PDIV_Msk) >> FDCAN_CKDIV_PDIV_Pos;
+  #endif
   //decode register value to devider
   if(!div)
     div = 1;
