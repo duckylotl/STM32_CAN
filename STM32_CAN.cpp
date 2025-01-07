@@ -33,6 +33,10 @@ FDCAN_HandleTypeDef *phfdcan2 = nullptr;
 #ifdef STM32_FDCAN_MEM_LAYOUT_FIXED
 #define STM32_FDCAN_STD_FILTER_COUNT 28
 #define STM32_FDCAN_EXT_FILTER_COUNT 8
+
+#elif defined(STM32_FDCAN_MEM_LAYOUT_CONFIGURABLE)
+#define STM32_FDCAN_STD_FILTER_COUNT 28
+#define STM32_FDCAN_EXT_FILTER_COUNT 8
 #endif
 
 #define STM32_FDCAN_SF_Size      (4U)
@@ -312,8 +316,44 @@ void STM32_CAN::init(void)
   setFilterGlobalNonMatching(REJECT, REJECT);
   setFilterGlobalRTR(false, false);
 
+  #ifdef STM32_FDCAN_MEM_LAYOUT_FIXED
   _can.handle.Init.StdFiltersNbr = STM32_FDCAN_STD_FILTER_COUNT;
   _can.handle.Init.ExtFiltersNbr = STM32_FDCAN_EXT_FILTER_COUNT;
+
+  #elif defined(STM32_FDCAN_MEM_LAYOUT_CONFIGURABLE)
+  /**
+   * space for 2560 words total, need to share with up to 3 FDCAN.
+   * Setup conservative layout that is the same for all.
+   * Give each instance 850 words space.
+   * 
+   *   (msg size, size in words)
+   * 28x STD Filter      (1w) =  28 words
+   *  8x EXT Filter      (2w) =   8 words
+   *  8x RX FIFO0   (64, 18w) = 144 words
+   *  8x RX FIFO1   (64, 18w) = 144 words
+   *  0x RX Buffers (64, 18w) =   0 words
+   *  8x TX FIFO    (64, 18w) = 144 words
+   *  0x TX Buffers (64, 18w) =   0 words
+   * 16x TX EVT          (2w) =  32 words
+   * uses 500 words out of 850
+   * */
+
+  //this can index is zero-based, re-use for mem offset calc
+  can_index_t can_index = get_can_index(_can.handle.Instance);
+  _can.handle.Init.MessageRAMOffset = (uint8_t)can_index * 850;
+  _can.handle.Init.StdFiltersNbr = STM32_FDCAN_STD_FILTER_COUNT;
+  _can.handle.Init.ExtFiltersNbr = STM32_FDCAN_EXT_FILTER_COUNT;
+  _can.handle.Init.RxFifo0ElmtsNbr = 8;
+  _can.handle.Init.RxFifo0ElmtSize = FDCAN_DATA_BYTES_64;
+  _can.handle.Init.RxFifo1ElmtsNbr = 8;
+  _can.handle.Init.RxFifo1ElmtSize = FDCAN_DATA_BYTES_64;
+  _can.handle.Init.RxBuffersNbr = 0; //no dedicated rx buffers
+  _can.handle.Init.RxBufferSize = FDCAN_DATA_BYTES_64;
+  _can.handle.Init.TxFifoQueueElmtsNbr = 8;
+  _can.handle.Init.TxElmtSize = FDCAN_DATA_BYTES_64;
+  _can.handle.Init.TxBuffersNbr = 0; //no dedicated Tx buffers
+  _can.handle.Init.TxEventsNbr = 16;
+  #endif
 #endif
 }
 

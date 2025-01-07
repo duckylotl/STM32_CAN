@@ -161,7 +161,6 @@ extern "C" void STM32_CAN_Poll_IRQ_Handler(void);
 #elif defined(STM32H7xx)
 #define STM32_FDCAN_HAS_CLOCK_CALIBRATION_UNIT
 #define STM32_FDCAN_MEM_LAYOUT_CONFIGURABLE
-#error "FDCAN with configurable memory layout not yet supported"
 #endif
 
 
