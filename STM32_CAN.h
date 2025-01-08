@@ -405,7 +405,7 @@ class STM32_CAN {
     void begin(bool retransmission = false);
     void end(void);
 
-    void setBaudRate(uint32_t baud);
+    void setBaudRate(uint32_t baudrate, uint32_t baudrate_data = 0UL);
 
 /**-------------------------------------------------------------
  *     post begin(), setup filters, data transfer
@@ -523,9 +523,12 @@ class STM32_CAN {
 
     template <typename T, size_t N>
     bool      lookupBaudrate(int Baudrate, const T(&table)[N]);
-    bool      calculateBaudrate(int Baudrate);
-    void      setBaudRateValues(uint16_t prescaler, uint8_t timeseg1,
-                                uint8_t timeseg2, uint8_t sjw);
+    bool      calculateBaudrate(uint32_t baudrate, uint32_t baudrate_data = 0);
+    static bool calculateBaudrateParameters(uint32_t frequency, uint32_t baudrate,
+                                uint16_t &prescaler, uint16_t &bs1, uint8_t &bs2, uint8_t &sjw, 
+                                uint16_t prescaler_max, uint16_t bs1_max, uint8_t bs2_max);
+    void      setBaudRateValues(uint16_t prescaler, uint16_t timeseg1,
+                                uint8_t timeseg2, uint8_t sjw, bool data_phase = false);
     uint32_t  getCanPeripheralClock(void);
 
     volatile CAN_message_t *rx_buffer = nullptr;
@@ -575,6 +578,8 @@ class STM32_CAN {
     uint32_t baudrate;
     
 #if defined(HAL_FDCAN_MODULE_ENABLED)
+    uint32_t baudrate_data;
+
     static uint32_t commonClockDivRegValue;
 
     bool timestampCounterEnabled;

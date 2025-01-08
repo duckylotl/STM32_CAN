@@ -698,7 +698,11 @@ void STM32_CAN::begin( bool retransmission ) {
   filtersInitialized = false;
 
   //try to start in case baudrate was set earlier
+#if defined(HAL_CAN_MODULE_ENABLED)
   if(!calculateBaudrate( baudrate ))
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  if(!calculateBaudrate( baudrate, baudrate_data ))
+#endif
   {
     return;
   }
@@ -768,9 +772,14 @@ void STM32_CAN::end()
   _canIsActive = false;
 }
 
-void STM32_CAN::setBaudRate(uint32_t baud)
+void STM32_CAN::setBaudRate(uint32_t baudrate, uint32_t baudrate_data)
 {
-  baudrate = baud;
+  this->baudrate = baudrate;
+#if defined(HAL_CAN_MODULE_ENABLED)
+  baudrate_data = 0; //force to 0, not applicable
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  this->baudrate_data = baudrate_data;
+#endif
 
   if(!hasPeripheral())
   {
@@ -778,7 +787,7 @@ void STM32_CAN::setBaudRate(uint32_t baud)
   }
 
   // Calculate and set baudrate
-  if(!calculateBaudrate( baud ))
+  if(!calculateBaudrate( baudrate, baudrate_data ))
   {
     return;
   }
@@ -1702,13 +1711,14 @@ uint32_t STM32_CAN::ringBufferCount(RingbufferTypeDef &ring)
 }
 
 #if defined(HAL_CAN_MODULE_ENABLED)
-void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1,
-                                  uint8_t timeseg2, uint8_t sjw)
+void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint16_t timeseg1,
+                                  uint8_t timeseg2, uint8_t sjw, bool data_phase)
 {
   uint32_t _SyncJumpWidth = 0;
   uint32_t _TimeSeg1 = 0;
   uint32_t _TimeSeg2 = 0;
   uint32_t _Prescaler = 0;
+  (void)data_phase;
 
   /* the CAN specification (v2.0) states that SJW shall be programmable between
    * 1 and min(4, timeseg1)... the bxCAN documentation doesn't mention this
@@ -1830,17 +1840,22 @@ void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1,
 }
 
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint8_t timeseg1, uint8_t timeseg2, uint8_t sjw)
+void STM32_CAN::setBaudRateValues(uint16_t prescaler, uint16_t timeseg1, uint8_t timeseg2, uint8_t sjw, bool data_phase)
 {
-  _can.handle.Init.NominalPrescaler = prescaler;
-  _can.handle.Init.NominalSyncJumpWidth = sjw;
-  _can.handle.Init.NominalTimeSeg1 = timeseg1;
-  _can.handle.Init.NominalTimeSeg2 = timeseg2;
-  /** NOTE: Bitrate switching not supported yet. Values are unuesd in non switched modes. */
-  _can.handle.Init.DataPrescaler = 1;
-  _can.handle.Init.DataSyncJumpWidth = 1;
-  _can.handle.Init.DataTimeSeg1 = 1;
-  _can.handle.Init.DataTimeSeg2 = 1;
+  if(!data_phase)
+  {
+    _can.handle.Init.NominalPrescaler = prescaler;
+    _can.handle.Init.NominalSyncJumpWidth = sjw;
+    _can.handle.Init.NominalTimeSeg1 = timeseg1;
+    _can.handle.Init.NominalTimeSeg2 = timeseg2;
+  }
+  else
+  {
+    _can.handle.Init.DataPrescaler = prescaler;
+    _can.handle.Init.DataSyncJumpWidth = sjw;
+    _can.handle.Init.DataTimeSeg1 = timeseg1;
+    _can.handle.Init.DataTimeSeg2 = timeseg2;
+  }
 }
 #endif
 
@@ -1859,20 +1874,61 @@ bool STM32_CAN::lookupBaudrate(int baud, const T(&table)[N]) {
   return false;
 }
 
-bool STM32_CAN::calculateBaudrate(int baud)
+bool STM32_CAN::calculateBaudrate(uint32_t baudrate, uint32_t baudrate_data)
 {
-  uint8_t bs1;
+  bool baud_set = false;
+  bool baud_sw_set = false;
+  uint8_t sjw;
+  uint16_t bs1;
   uint8_t bs2;
   uint16_t prescaler;
+  #if defined(HAL_CAN_MODULE_ENABLED)
+  (void)baudrate_data;
+  #endif
 
   const uint32_t frequency = getCanPeripheralClock();
 
   if (frequency == 48000000) {
-    if (lookupBaudrate(baud, BAUD_RATE_TABLE_48M)) return true;
+    if (lookupBaudrate(baudrate, BAUD_RATE_TABLE_48M)) baud_set = true;
   } else if (frequency == 45000000) {
-    if (lookupBaudrate(baud, BAUD_RATE_TABLE_45M)) return true;
+    if (lookupBaudrate(baudrate, BAUD_RATE_TABLE_45M)) baud_set = true;
   }
 
+#if defined(HAL_CAN_MODULE_ENABLED)
+  if(!baud_set && calculateBaudrateParameters(frequency, baudrate, prescaler, bs1, bs2, sjw, 1024,  16,  5)) /** bs2 max 8, sjw max 4 */
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+  if(!baud_set && calculateBaudrateParameters(frequency, baudrate, prescaler, bs1, bs2, sjw,  512, 256, 85)) /** bs2 max 128, sjw max 128 */
+#endif
+  {
+    baud_set = true;
+    setBaudRateValues(prescaler, bs1, bs2, sjw);
+  }
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  /** if no bitrate switching is configured data bitrate registers will be ignored
+   *  skip setting up bitraterate  */
+  if(_can.handle.Init.FrameFormat != FDCAN_FRAME_FD_BRS)
+  {
+    baud_sw_set = true;
+  }
+  /** data bitrate has to be faster than normal */
+  else if(baudrate_data <= baudrate)
+  {
+    return false;
+  }
+
+  if(!baud_sw_set && calculateBaudrateParameters(frequency, baudrate_data, prescaler, bs1, bs2, sjw, 32, 32, 10)) /** bs2 max 16, sjw max 16 */
+  {
+    baud_sw_set = true;
+    setBaudRateValues(prescaler, bs1, bs2, sjw, true);
+  }
+  return baud_set && baud_sw_set;
+#endif
+  return baud_set;
+}
+
+bool STM32_CAN::calculateBaudrateParameters(uint32_t frequency, uint32_t baudrate, uint16_t &prescaler, uint16_t &bs1, uint8_t &bs2, uint8_t &sjw, uint16_t prescaler_max, uint16_t bs1_max, uint8_t bs2_max)
+{
   /* this loop seeks a precise baudrate match, with the sample point positioned
    * at between ~75-95%. the nominal bit time is produced from N time quanta,
    * running at the prescaled clock rate (where N = 1 + bs1 + bs2). this algorithm
@@ -1885,25 +1941,21 @@ bool STM32_CAN::calculateBaudrate(int baud)
    *
    * for more details + justification, see: https://github.com/pazi88/STM32_CAN/pull/41
    */
-#if defined(HAL_CAN_MODULE_ENABLED)
-  for (prescaler = 1; prescaler <= 1024; prescaler += 1)
-#elif defined(HAL_FDCAN_MODULE_ENABLED)
-  for (prescaler = 1; prescaler <= 512; prescaler += 1)
-#endif
+  for (prescaler = 1; prescaler <= prescaler_max; prescaler += 1) 
   {
     const uint32_t can_freq = frequency / prescaler;
-    const uint32_t baud_min = can_freq / (1 + 5 + 16);
+    const uint32_t baud_min = can_freq / (1 + bs2_max + bs1_max);
 
     /* skip all prescaler values that can't possibly achieve the desired baudrate */
-    if (baud_min > baud) continue;
+    if (baud_min > baudrate) continue;
 
-    for (bs2 = 1; bs2 <= 5; bs2 += 1) {
-      for (bs1 = (bs2 * 3) - 1; bs1 <= 16; bs1 += 1) {
+    for (bs2 = 1; bs2 <= bs2_max; bs2 += 1) {
+      for (bs1 = (bs2 * 3) - 1; bs1 <= bs1_max; bs1 += 1) {
         const uint32_t baud_cur = can_freq / (1 + bs1 + bs2);
 
-        if (baud_cur != baud) continue;
+        if (baud_cur != baudrate) continue;
 
-        setBaudRateValues(prescaler, bs1, bs2, 4);
+        sjw = 4;
         return true;
       }
     }
