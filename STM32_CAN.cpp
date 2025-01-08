@@ -338,9 +338,9 @@ void STM32_CAN::init(void)
    * uses 500 words out of 850
    * */
 
-  //this can index is zero-based, re-use for mem offset calc
-  can_index_t can_index = get_can_index(_can.handle.Instance);
-  _can.handle.Init.MessageRAMOffset = (uint8_t)can_index * 850;
+  /** NOTE: don't know which peripheral we are managing yet.
+   * Setting offset in begin() when peripheral is known */
+  _can.handle.Init.MessageRAMOffset = 0;
   _can.handle.Init.StdFiltersNbr = STM32_FDCAN_STD_FILTER_COUNT;
   _can.handle.Init.ExtFiltersNbr = STM32_FDCAN_EXT_FILTER_COUNT;
   _can.handle.Init.RxFifo0ElmtsNbr = 8;
@@ -689,6 +689,13 @@ void STM32_CAN::begin( bool retransmission ) {
     HAL_NVIC_EnableIRQ(FDCAN3_IT0_IRQn);
     _can.bus = 3;
   }
+#endif
+
+#if defined(STM32_FDCAN_MEM_LAYOUT_CONFIGURABLE)
+  /** setup mem offset, see init() for details of mem organization */
+  //this can index is zero-based, re-use for mem offset calc
+  can_index_t can_index = get_can_index(_can.handle.Instance);
+  _can.handle.Init.MessageRAMOffset = (uint8_t)can_index * 850;
 #endif
 #endif
 
