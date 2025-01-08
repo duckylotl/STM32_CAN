@@ -401,8 +401,7 @@ class STM32_CAN {
  *     setBaudRate may be called before or after begin
  * -------------------------------------------------------------
  */
-    // Begin. By default the automatic retransmission is enabled. If it causes problems, use begin(false) to disable it.
-    void begin(bool retransmission = false);
+    void begin(uint32_t baudrate = 0UL, uint32_t baudrate_data = 0UL);
     void end(void);
 
     void setBaudRate(uint32_t baudrate, uint32_t baudrate_data = 0UL);

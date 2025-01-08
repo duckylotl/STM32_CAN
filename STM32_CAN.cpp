@@ -561,7 +561,8 @@ void STM32_CAN::setCommonClockDiv(uint8_t div)
  * -------------------------------------------------------------
  */
 // Init and start CAN
-void STM32_CAN::begin( bool retransmission ) {
+void STM32_CAN::begin(uint32_t baudrate, uint32_t baudrate_data)
+{
 
   // exit if CAN already is active
   if (_canIsActive) return;
@@ -706,20 +707,19 @@ void STM32_CAN::begin( bool retransmission ) {
 #endif
 
 
-  setAutoRetransmission(retransmission);
   
   filtersInitialized = false;
 
-  //try to start in case baudrate was set earlier
-#if defined(HAL_CAN_MODULE_ENABLED)
-  if(!calculateBaudrate( baudrate ))
-#elif defined(HAL_FDCAN_MODULE_ENABLED)
-  if(!calculateBaudrate( baudrate, baudrate_data ))
+  //load up already set values if called without args
+  if(baudrate == 0)
+    baudrate = this->baudrate;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  if(baudrate_data == 0)
+    baudrate_data = this->baudrate_data;
 #endif
-  {
-    return;
-  }
-  start();
+  /** store baudrates
+   * this will start as well if baudrates are valid */
+  setBaudRate( baudrate, baudrate_data );
 }
 
 void STM32_CAN::end()
