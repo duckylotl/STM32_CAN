@@ -504,10 +504,11 @@ class STM32_CAN {
     void      init(void);
 #if defined(HAL_CAN_MODULE_ENABLED)
     CAN_TypeDef * getPeripheral(void);
+    bool      allocatePeripheral(CAN_TypeDef *instance);
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
     FDCAN_GlobalTypeDef * getPeripheral(void);
+    bool      allocatePeripheral(FDCAN_GlobalTypeDef *instance);
 #endif
-    bool      allocatePeripheral(void);
     bool      freePeripheral(void);
     bool      hasPeripheral(void);
     bool      updateBaudrateRegisters(void);

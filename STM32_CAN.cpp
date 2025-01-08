@@ -142,9 +142,13 @@ can_index_t get_can_index(FDCAN_GlobalTypeDef *instance)
   return index;
 }
 
-bool STM32_CAN::allocatePeripheral()
+#if defined(HAL_CAN_MODULE_ENABLED)
+bool STM32_CAN::allocatePeripheral(CAN_TypeDef *instance)
+#elif defined(HAL_FDCAN_MODULE_ENABLED)
+bool STM32_CAN::allocatePeripheral(FDCAN_GlobalTypeDef *instance)
+#endif
 {
-  can_index_t index = get_can_index(_can.handle.Instance);
+  can_index_t index = get_can_index(instance);
   if(index >= CAN_NUM)
   {
     return false;
@@ -155,6 +159,7 @@ bool STM32_CAN::allocatePeripheral()
     Error_Handler();
     return false;
   }
+  _can.handle.Instance = instance;
   //register with global, we own this instance now
   canObj[index] = &_can;
   return true;
@@ -561,14 +566,13 @@ void STM32_CAN::begin( bool retransmission ) {
   // exit if CAN already is active
   if (_canIsActive) return;
 
-  _can.handle.Instance = getPeripheral();
-  if(_can.handle.Instance == NP)
+  auto instance = getPeripheral();
+  if(instance == NP)
   {
     //impossible pinconfig, done here
-    _can.handle.Instance = nullptr;
     return;
   }
-  if(!allocatePeripheral())
+  if(!allocatePeripheral(instance))
   {
     //peripheral already in use
     return;
