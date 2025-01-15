@@ -347,7 +347,7 @@ class STM32_CAN {
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
     STM32_CAN(FDCAN_GlobalTypeDef* canPort, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
 #endif
-
+    ~STM32_CAN();
 /**-------------------------------------------------------------
  *     setup functions
  *     no effect after begin()

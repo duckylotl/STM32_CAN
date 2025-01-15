@@ -293,6 +293,11 @@ STM32_CAN::STM32_CAN( FDCAN_GlobalTypeDef* canPort, RXQUEUE_TABLE rxSize, TXQUEU
 }
 #endif
 
+STM32_CAN::~STM32_CAN()
+{
+  end();
+}
+
 void STM32_CAN::init(void)
 {
   _can.__this = (void*)this;
