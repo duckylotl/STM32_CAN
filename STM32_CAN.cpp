@@ -566,22 +566,22 @@ void STM32_CAN::setCommonClockDiv(uint8_t div)
  * -------------------------------------------------------------
  */
 // Init and start CAN
-void STM32_CAN::begin(uint32_t baudrate, uint32_t baudrate_data)
+bool STM32_CAN::begin(uint32_t baudrate, uint32_t baudrate_data)
 {
 
   // exit if CAN already is active
-  if (_canIsActive) return;
+  if (_canIsActive) return false;
 
   auto instance = getPeripheral();
   if(instance == NP)
   {
     //impossible pinconfig, done here
-    return;
+    return false;
   }
   if(!allocatePeripheral(instance))
   {
     //peripheral already in use
-    return;
+    return false;
   }
 
   _canIsActive = true;
@@ -724,7 +724,7 @@ void STM32_CAN::begin(uint32_t baudrate, uint32_t baudrate_data)
 #endif
   /** store baudrates
    * this will start as well if baudrates are valid */
-  setBaudRate( baudrate, baudrate_data );
+  return setBaudRate( baudrate, baudrate_data );
 }
 
 void STM32_CAN::end()
@@ -790,7 +790,7 @@ void STM32_CAN::end()
   _canIsActive = false;
 }
 
-void STM32_CAN::setBaudRate(uint32_t baudrate, uint32_t baudrate_data)
+bool STM32_CAN::setBaudRate(uint32_t baudrate, uint32_t baudrate_data)
 {
   this->baudrate = baudrate;
 #if defined(HAL_CAN_MODULE_ENABLED)
@@ -801,13 +801,13 @@ void STM32_CAN::setBaudRate(uint32_t baudrate, uint32_t baudrate_data)
 
   if(!hasPeripheral())
   {
-    return;
+    return false;
   }
 
   // Calculate and set baudrate
   if(!calculateBaudrate( baudrate, baudrate_data ))
   {
-    return;
+    return false;
   }
 
   /** just update baudrate regs if running */
@@ -822,11 +822,11 @@ void STM32_CAN::setBaudRate(uint32_t baudrate, uint32_t baudrate_data)
      || (state == HAL_FDCAN_STATE_BUSY))
 #endif
   {
-    updateBaudrateRegisters();
+    return updateBaudrateRegisters();
   }
   else
   {
-    start();
+    return start();
   }
 }
 
@@ -908,14 +908,15 @@ bool STM32_CAN::updateBaudrateRegisters()
   return true;
 }
 
-void STM32_CAN::start()
+bool STM32_CAN::start()
 {
+  bool res = true;
   // Initializes CAN
 #if defined(HAL_CAN_MODULE_ENABLED)
-  HAL_CAN_Init( &_can.handle );
+  res = res && HAL_CAN_Init( &_can.handle ) == HAL_OK;
 
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-  HAL_FDCAN_Init( &_can.handle );
+  res = res && HAL_FDCAN_Init( &_can.handle ) == HAL_OK;
   HAL_FDCAN_ConfigExtendedIdMask(&_can.handle, extIdAndMask);
   HAL_FDCAN_ConfigGlobalFilter(&_can.handle, this->actionStd, this->actionExt,
     this->rejectStdRTR ? FDCAN_REJECT_REMOTE : FDCAN_FILTER_REMOTE,
@@ -947,9 +948,9 @@ void STM32_CAN::start()
 
   // Start the CAN peripheral
 #if defined(HAL_CAN_MODULE_ENABLED)
-  HAL_CAN_Start( &_can.handle );
+  res = res && HAL_CAN_Start( &_can.handle ) == HAL_OK;
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
-  HAL_FDCAN_Start( &_can.handle );
+  res = res && HAL_FDCAN_Start( &_can.handle ) == HAL_OK;
 #endif
 
   // Activate CAN notifications
@@ -964,6 +965,7 @@ void STM32_CAN::start()
   HAL_FDCAN_ActivateNotification( &_can.handle, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0 /*ignored arg for this event*/);
   HAL_FDCAN_ActivateNotification( &_can.handle, FDCAN_IT_TX_FIFO_EMPTY, 0 /*ignored arg for this event*/);
   #endif
+  return res;
 }
 
 void STM32_CAN::stop()

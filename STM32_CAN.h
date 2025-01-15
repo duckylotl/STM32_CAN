@@ -401,10 +401,23 @@ class STM32_CAN {
  *     setBaudRate may be called before or after begin
  * -------------------------------------------------------------
  */
-    void begin(uint32_t baudrate = 0UL, uint32_t baudrate_data = 0UL);
+
+    /** Start the CAN Peripheral
+     * 
+     * Fails if peripheral was already started from another instance.
+     * Returns true if successfully started.
+     * 
+     * If no baudrates are passed will use values from previous setBaudRate calls.
+     * If baudrates are not set / not reachable, will return false. Call setBaudRate with valid rates to start.
+     * */
+    bool begin(uint32_t baudrate = 0UL, uint32_t baudrate_data = 0UL);
     void end(void);
 
-    void setBaudRate(uint32_t baudrate, uint32_t baudrate_data = 0UL);
+    /** Set baudrate in Hz, baudrate_data only used if frame format is FD_NO_BRS or FD_BRS.
+     * Returns true if baudrate can be reached and bus was successfully set to this rate.
+     * If called before begin() always returns false since peripheral is not owned/started yet
+     * */
+    bool setBaudRate(uint32_t baudrate, uint32_t baudrate_data = 0UL);
 
 /**-------------------------------------------------------------
  *     post begin(), setup filters, data transfer
@@ -511,7 +524,7 @@ class STM32_CAN {
     bool      freePeripheral(void);
     bool      hasPeripheral(void);
     bool      updateBaudrateRegisters(void);
-    void      start(void);
+    bool      start(void);
     void      stop(void);
     void      initializeFilters();
     bool      isInitialized() { return rx_buffer != 0; }
