@@ -943,7 +943,15 @@ bool STM32_CAN::start()
   CCU_conf.CalFieldLength = FDCAN_CALIB_FIELD_LENGTH_32;
   CCU_conf.TimeQuantaPerBitTime = 4;
   CCU_conf.WatchdogStartValue = 0;
-  HAL_FDCAN_ConfigClockCalibration(&_can.handle, &CCU_conf);
+  /** NOTE: HAL only allows setting this when managing FDCAN1 instance
+   * because changes can only be applied while it is not active.
+   * setCommonClockDiv() already applies setting immediately if FDCAN1 is not active
+   * in case other FDCAN instances are used and FDCAN1 is never initialized.
+   */
+  if(_can.handle.Instance == FDCAN1)
+  {
+    HAL_FDCAN_ConfigClockCalibration(&_can.handle, &CCU_conf);
+  }
   #endif
 #endif
 
