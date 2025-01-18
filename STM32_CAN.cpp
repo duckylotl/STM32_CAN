@@ -591,7 +591,15 @@ bool STM32_CAN::begin(uint32_t baudrate, uint32_t baudrate_data)
 
   initializeBuffers();
   
-  pin_function(rx, pinmap_function(rx, PinMap_CAN_RD));
+  /**
+   * NOTE: enabling the internal pullup of RX pin
+   * in case no external circuitry (CAN Transceiver) is connected this will ensure a valid recessive level.
+   * A valid recessive level on RX is needed to leave init mode and enter normal mode.
+   * This is even the case if loopback is enabled where the input is internally connected.
+   * This lets loopback only tests without external circuitry sill function.
+   */
+  uint32_t rx_func = pinmap_function(rx, PinMap_CAN_RD);
+  pin_function(rx, STM_PIN_DATA(STM_MODE_AF_PP, GPIO_PULLUP, STM_PIN_AFNUM(rx_func)));
   if(tx != NC)
   {
     pin_function(tx, pinmap_function(tx, PinMap_CAN_TD));
