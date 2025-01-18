@@ -320,11 +320,14 @@ void STM32_CAN::init(void)
   _can.handle.Init.ClockDivider = commonClockDivRegValue;
   #endif
 
+  baudrate_data = 0UL;
+
   setFrameFormat(CLASSIC);
   setRxFIFOLock(false, false);
   setTransmitPause(false);
   setProtocolException(true);
 
+  setExtIdAndMask(0x1FFFFFFFUL);
   setFilterGlobalNonMatching(REJECT, REJECT);
   setFilterGlobalRTR(false, false);
 
