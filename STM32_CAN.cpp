@@ -1926,6 +1926,8 @@ bool STM32_CAN::calculateBaudrate(uint32_t baudrate, uint32_t baudrate_data)
   #endif
 
   const uint32_t frequency = getCanPeripheralClock();
+  if(frequency == 0)
+    return false;
 
   if (frequency == 48000000) {
     if (lookupBaudrate(baudrate, BAUD_RATE_TABLE_48M)) baud_set = true;
