@@ -2286,7 +2286,8 @@ void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef *FDCanHandle, uint32
   STM32_CAN * _can = (STM32_CAN *)canObj->__this;
 
   CAN_message_t txmsg;
-  if (_can->removeFromRingBuffer(_can->txRing, txmsg))
+  uint32_t free = HAL_FDCAN_GetTxFifoFreeLevel(FDCanHandle);
+  while(free-- && _can->removeFromRingBuffer(_can->txRing, txmsg))
   {
     _can->write(txmsg, true);
   }
