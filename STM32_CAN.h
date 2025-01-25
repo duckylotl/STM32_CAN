@@ -320,11 +320,11 @@ class STM32_CAN {
 
     enum TX_BUFFER_MODE {
       #if defined(HAL_CAN_MODULE_ENABLED)
-      FIFO  = ENABLE, /** Sequencial transfers order */
-      QUEUE = DISABLE /** Sequence based on msg ID priorites. Only effects hardware queue. */
+      FIFO  = ENABLE, /** Sequential transfers order */
+      QUEUE = DISABLE /** Sequence based on msg ID priorities. Only effects hardware queue. */
       #elif defined(HAL_FDCAN_MODULE_ENABLED)
-      FIFO  = FDCAN_TX_FIFO_OPERATION, /** Sequencial transfers order */
-      QUEUE = FDCAN_TX_QUEUE_OPERATION /** Sequence based on msg ID priorites. Only effects hardware queue. */
+      FIFO  = FDCAN_TX_FIFO_OPERATION, /** Sequential transfers order */
+      QUEUE = FDCAN_TX_QUEUE_OPERATION /** Sequence based on msg ID priorities. Only effects hardware queue. */
       #endif
     };
 
@@ -347,6 +347,7 @@ class STM32_CAN {
 #elif defined(HAL_FDCAN_MODULE_ENABLED)
     STM32_CAN(FDCAN_GlobalTypeDef* canPort, RXQUEUE_TABLE rxSize = RX_SIZE_16, TXQUEUE_TABLE txSize = TX_SIZE_16);
 #endif
+
     ~STM32_CAN();
 /**-------------------------------------------------------------
  *     setup functions
@@ -468,7 +469,7 @@ class STM32_CAN {
 
 #if defined(HAL_CAN_MODULE_ENABLED)
     /** Legacy, broken! Only works correctly for 32 bit mask mode 
-     * Retruns true on Error, false on Success (like Teensy functions, opposite of STM32 function)
+     * Returns true on Error, false on Success (like Teensy functions, opposite of STM32 function)
     */
     bool setFilter(uint8_t bank_num, uint32_t filter_id, uint32_t mask, IDE = AUTO, uint32_t filter_mode = CAN_FILTERMODE_IDMASK, uint32_t filter_scale = CAN_FILTERSCALE_32BIT, uint32_t fifo = CAN_FILTER_DEFAULT_FIFO);
 #endif
