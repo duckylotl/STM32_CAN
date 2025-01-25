@@ -3,7 +3,7 @@ This is simple example to read all data from CAN bus and print it out to serial 
 */
 
 #include "STM32_CAN.h"
-STM32_CAN Can( CAN1, DEF );  //Use PA11/12 pins for CAN1.
+STM32_CAN Can( PA_11, PA_12 );  //Use PA11/12 pins for CAN1.
 //STM32_CAN Can( CAN1, ALT );  //Use PB8/9 pins for CAN1.
 //STM32_CAN Can( CAN1, ALT_2 );  //Use PD0/1 pins for CAN1.
 //STM32_CAN Can( CAN2, DEF );  //Use PB12/13 pins for CAN2.

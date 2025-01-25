@@ -1,7 +1,7 @@
 #include "STM32_CAN.h"
-//STM32_CAN Can1( CAN1, DEF );
+STM32_CAN Can1( PA_11, PA_12 );
 //STM32_CAN Can1( CAN1, ALT );
-STM32_CAN Can1( CAN1, ALT_2 );
+// STM32_CAN Can1( CAN1, ALT_2 );
 
 static CAN_message_t CAN_RX_msg;
 

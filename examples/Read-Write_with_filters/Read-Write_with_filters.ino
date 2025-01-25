@@ -10,7 +10,7 @@ static CAN_message_t CAN_outMsg_3;
 static CAN_message_t CAN_inMsg;
 
 // This will use PA11/12 pins for CAN1 and set RX-buffer size to 64-messages. TX-buffer size is kept at default 16.
-STM32_CAN Can( CAN1, DEF, RX_SIZE_64, TX_SIZE_16 );
+STM32_CAN Can( PA_11, PA_12, RX_SIZE_64, TX_SIZE_16 );
 
 uint8_t Counter;
 
