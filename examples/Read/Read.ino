@@ -16,9 +16,14 @@ static CAN_message_t CAN_RX_msg;
 void setup() {
   Serial.begin(115200);
   Can.begin();
-  //Can.setBaudRate(250000);  //250KBPS
-  Can.setBaudRate(500000);  //500KBPS
-  //Can.setBaudRate(1000000);  //1000KBPS
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::CLASSIC);//no FD frames. default
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_NO_BRS);//use FD mode without baudrate switch
+  Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_BRS);//use FD mode with baudrate switch
+#endif
+  // Can.setBaudRate(500000); // 500kbps, no FD switched data rate, even on FD capable hardware
+  Can.setBaudRate(500000, 1000000);  //500kbps, use 1Mbps switched data rate (ignored on non-fd peripheral)
 }
 
 void loop() {
@@ -32,6 +37,15 @@ void loop() {
       Serial.print(" Extended ID:");
     }
     Serial.print(CAN_RX_msg.id, HEX);
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    if(CAN_RX_msg.flags.fd_rateswitch) {
+      Serial.println(" [FD-BRS]");
+    }
+    else if(CAN_RX_msg.flags.fd_frame) {
+      Serial.println(" [FD]");
+    }
+#endif
 
     Serial.print(" DLC: ");
     Serial.print(CAN_RX_msg.len);

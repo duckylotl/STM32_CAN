@@ -45,6 +45,15 @@ void readCanMessage()  // Read data from CAN bus and print out the messages to s
   }
   Serial.print(CAN_inMsg.id, HEX);
 
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    if(CAN_inMsg.flags.fd_rateswitch) {
+      Serial.println(" [FD-BRS]");
+    }
+    else if(CAN_inMsg.flags.fd_frame) {
+      Serial.println(" [FD]");
+    }
+#endif
+
   Serial.print(" DLC: ");
   Serial.print(CAN_inMsg.len);
   if (CAN_inMsg.flags.remote == false) {
@@ -65,12 +74,20 @@ void setup(){
   Serial.begin(115200);
   
   Can.begin();
-  Can.setBaudRate(500000);
-  Can.setMBFilterProcessing( MB0, 0x153, 0x1FFFFFFF );
-  Can.setMBFilterProcessing( MB1, 0x613, 0x1FFFFFFF );
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::CLASSIC);//no FD frames. default
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_NO_BRS);//use FD mode without baudrate switch
+  Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_BRS);//use FD mode with baudrate switch
+#endif
+  // Can.setBaudRate(500000); // 500kbps, no FD switched data rate, even on FD capable hardware
+  Can.setBaudRate(500000, 1000000);  //500kbps, use 1Mbps switched data rate (ignored on non-fd peripheral)
+
+  Can.setFilterSingleMask(0, 0x153, 0x1FFFFFFF, AUTO);
+  Can.setFilterSingleMask(1, 0x613, 0x1FFFFFFF, AUTO);
   // You can also set that is the ID Standard or Extended
-  Can.setMBFilterProcessing( MB2, 0x615, 0x1FFFFFFF, STD );
-  Can.setMBFilterProcessing( MB3, 0x1F0, 0x1FFFFFFF, EXT );
+  Can.setFilterSingleMask(2, 0x615, 0x1FFFFFFF, STD);
+  Can.setFilterSingleMask(3, 0x1F0, 0x1FFFFFFF, EXT);
 
   // We set the data that is static for the three different message structs once here.
   CAN_outMsg_1.id = (0x1A5);
@@ -85,7 +102,11 @@ void setup(){
   CAN_outMsg_1.buf[7] =  0x00;
 
   CAN_outMsg_2.id = (0x7E8);
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  CAN_outMsg_2.len = 64;
+#else
   CAN_outMsg_2.len = 8;
+#endif
   CAN_outMsg_2.buf[0] =  0x03;
   CAN_outMsg_2.buf[1] =  0x41;
   CAN_outMsg_2.buf[3] =  0x21;
@@ -93,6 +114,9 @@ void setup(){
   CAN_outMsg_2.buf[5] =  0x00;
   CAN_outMsg_2.buf[6] =  0x00;
   CAN_outMsg_2.buf[7] =  0xFF;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  CAN_outMsg_2.flags.fd_frame = true;
+#endif
 
   CAN_outMsg_3.id = (0xA63);
   CAN_outMsg_3.len = 8;
@@ -104,9 +128,13 @@ void setup(){
   CAN_outMsg_3.buf[5] =  0x00;
   CAN_outMsg_3.buf[6] =  0x00;
   CAN_outMsg_3.buf[7] =  0x00;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  CAN_outMsg_3.flags.fd_frame = true;
+  CAN_outMsg_3.flags.fd_rateswitch = true;
+#endif
 
   // setup hardware timer to send data in 50Hz pace
-  #if defined(TIM1)
+#if defined(TIM1)
   TIM_TypeDef *Instance = TIM1;
 #else
   TIM_TypeDef *Instance = TIM2;

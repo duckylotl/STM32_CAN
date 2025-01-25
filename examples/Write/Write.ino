@@ -16,9 +16,14 @@ static CAN_message_t CAN_TX_msg;
 void setup() {
   Serial.begin(115200);
   Can.begin();
-  //Can.setBaudRate(250000);  //250KBPS
-  Can.setBaudRate(500000);  //500KBPS
-  //Can.setBaudRate(1000000);  //1000KBPS
+
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::CLASSIC);//no FD frames. default
+  // Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_NO_BRS);//use FD mode without baudrate switch
+  Can.setFrameFormat(STM32_CAN::FRAME_FORMAT::FD_BRS);//use FD mode with baudrate switch
+#endif
+  // Can.setBaudRate(500000); // 500kbps, no FD switched data rate, even on FD capable hardware
+  Can.setBaudRate(500000, 1000000);  //500kbps, use 1Mbps switched data rate (ignored on non-fd peripheral)
 }
 
 void loop() {
@@ -36,6 +41,10 @@ void loop() {
     CAN_TX_msg.buf[5] =  0x00;
     CAN_TX_msg.buf[6] =  0x00;
     CAN_TX_msg.buf[7] =  0x00;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    CAN_TX_msg.flags.fd_frame = false;
+    CAN_TX_msg.flags.fd_rateswitch = false;
+#endif
   
     Can.write(CAN_TX_msg);
 
@@ -67,7 +76,11 @@ void loop() {
 
     CAN_TX_msg.id = (0x23);
     CAN_TX_msg.flags.extended = 0;  // Back to standard ID.
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    CAN_TX_msg.len = 64;
+#else
     CAN_TX_msg.len = 8;
+#endif
     CAN_TX_msg.buf[0] =  0x03;
     CAN_TX_msg.buf[1] =  0x41;
     CAN_TX_msg.buf[2] =  0x11;
@@ -76,6 +89,20 @@ void loop() {
     CAN_TX_msg.buf[5] =  0x00;
     CAN_TX_msg.buf[6] =  0x00;
     CAN_TX_msg.buf[7] =  Counter;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    /** 8-51 default 0x00
+     * repeat above for last 8 byte */
+    CAN_TX_msg.buf[52] =  0x03;
+    CAN_TX_msg.buf[53] =  0x41;
+    CAN_TX_msg.buf[54] =  0x11;
+    CAN_TX_msg.buf[59] =  0x33;
+    CAN_TX_msg.buf[60] =  0x00;
+    CAN_TX_msg.buf[61] =  0x00;
+    CAN_TX_msg.buf[62] =  0x00;
+    CAN_TX_msg.buf[63] =  Counter;
+    //send as FD frame (needed for len > 8)
+    CAN_TX_msg.flags.fd_frame = true;
+#endif
 
     Can.write(CAN_TX_msg);
 
@@ -89,6 +116,10 @@ void loop() {
     CAN_TX_msg.buf[5] =  Counter;
     CAN_TX_msg.buf[6] =  0x00;
     CAN_TX_msg.buf[7] =  0x00;
+#if defined(HAL_FDCAN_MODULE_ENABLED)
+    //also switch baudrate when sending data
+    CAN_TX_msg.flags.fd_rateswitch = true;
+#endif
 
     Can.write(CAN_TX_msg);
     Serial.print("Sent: ");
