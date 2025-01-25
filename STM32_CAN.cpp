@@ -204,7 +204,7 @@ STM32_CAN::STM32_CAN(uint32_t rx, uint32_t tx, RXQUEUE_TABLE rxSize, TXQUEUE_TAB
 }
 
 STM32_CAN::STM32_CAN(PinName rx, PinName tx, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE txSize)
-  : rx(rx), tx(tx), sizeRxBuffer(rxSize), sizeTxBuffer(txSize),
+  : sizeRxBuffer(rxSize), sizeTxBuffer(txSize), rx(rx), tx(tx),
     preemptPriority(MAX_IRQ_PRIO_VALUE), subPriority(0)
 {
   init();
@@ -223,7 +223,7 @@ STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE 
 
 //legacy pin config for compatibility
 STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize, TXQUEUE_TABLE txSize )
-  : rx(NC), tx(NC), sizeRxBuffer(rxSize), sizeTxBuffer(txSize),
+  : sizeRxBuffer(rxSize), sizeTxBuffer(txSize), rx(NC), tx(NC),
     preemptPriority(MAX_IRQ_PRIO_VALUE), subPriority(0)
 {
   if (canPort == CAN1)
@@ -243,6 +243,12 @@ STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize,
         rx = PD_0;
         tx = PD_1;
         break;
+
+      #else
+      default:
+        rx = NC;
+        tx = NC;
+        break;
       #endif
     }
   }
@@ -259,6 +265,10 @@ STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize,
         rx = PB_5;
         tx = PB_6;
         break;
+      default:
+        rx = NC;
+        tx = NC;
+        break;
     }
   }
 #endif
@@ -274,6 +284,10 @@ STM32_CAN::STM32_CAN( CAN_TypeDef* canPort, CAN_PINS pins, RXQUEUE_TABLE rxSize,
       case ALT:
         rx = PB_3;
         tx = PB_4;
+        break;
+      default:
+        rx = NC;
+        tx = NC;
         break;
     }
   }
