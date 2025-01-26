@@ -6,8 +6,7 @@ This library should support all STM32 MCUs that are also supported in stm32duino
 up to 3x CAN buses. This library is based on several STM32 CAN example libraries linked below and it has been 
 combined with few things from Teensy FlexCAN library to make it compatible with CAN coding projects made for Teensy.
 
-Note! This will currently only work with CAN interface. Not with CANFD.
-
+This works with both the classic bxCAN peripheral found in F0, F1, F2, F3, F4, L4, F7 platforms, and FDCAN peripherals found in G0, G4, H5, U5, L5, H7 platforms.
 
 Links to repositories that have helped with this:
 
@@ -38,7 +37,7 @@ Can convert between the two with `digitalPinToPinName()` and `pinNametoDigitalPi
 
 Tx pin may be defined as `PNUM_NOT_DEFINED` (digital pin number) or `NC` (PinName). Then only Rx is setup, allowing a listen only mode.
 
-The original method by choosing from 3 sets of fixed pin combinations can still be used as well for compatibility.
+The original method by choosing from 3 sets of fixed pin combinations can still be used as well for compatibility (not for FDCAN devices).
 ```Cpp
 STM32_CAN Can1( CAN1, DEF );
 ```
@@ -63,17 +62,24 @@ STM32_CAN Can1 (PA_11, PA_12, RX_SIZE_256, TX_SIZE_256);
 #### Additional settings
 Following settings may be changed before starting the driver with `begin()`.
 ```Cpp
-setIRQPriority(uint32_t preemptPriority, uint32_t subPriority); // default: lowest prio, 0
+setIRQPriority(uint32_t preemptPriority, uint32_t subPriority); // default: lowest prio
 setAutoRetransmission(bool enabled);  //default: true
 setRxFIFOLock(bool fifo0locked);      //default: false
 setTxBufferMode(TX_BUFFER_MODE mode); //default: FIFO
 setTimestampCounter(bool enabled);    //default: false
 setMode(MODE mode);                   //default: NORMAL
+//only for bxCAN devices
 setAutoBusOffRecovery(bool enabled);  //default: false
+//only for FDCAN devices
+setFrameFormat(FRAME_FORMAT format);  //default: CLASSIC
+setTransmitPause(bool enabled);       //default: false
+setProtocolException(bool enabled);   //default: true
+setExtIdAndMask(uint32_t mask);       //default: 0x1FFFFFFFUL
+setFilterGlobalNonMatching(FILTER_ACTION actionStd, FILTER_ACTION actionExt); //default: REJECT, REJECT
+setFilterGlobalRTR(bool rejectStdRTR, bool rejectExtRTR); //default: false, false
+setCommonClockDiv(uint8_t div);       //default: 1
 ```
-**Note**: `setTimestampCounter()` should always be set `false`. Feature is marked as non functioning in Erratas.
-
-**Note**: begin() will overwrite `setAutoRetransmission()` setting (`false` by default).
+**Note**: `setTimestampCounter()` should always be set `false` on bxCAN devices. Feature is marked as non functioning in Erratas.
 
 #### Start / Stop bus
 
@@ -81,19 +87,27 @@ Before using library commands, begin must be called.
 ```Cpp
 Can1.begin();
 ```
-Optionally automatic retransmission can be enabled with begin.
+Optionally baud rate may be passed to start bus right away.
 ```Cpp
-Can1.begin(true);
+Can1.begin(500000);
 ```
-Set baud rate by using.
+Or set baud rate by using.
 ```Cpp
 Can1.setBaudRate(500000);
 ```
 500 kbit/s in this case.
 
-`setBaudRate` may be called before or after begin. Bus start once both are called.
+`setBaudRate()` may be called before or after begin. Bus starts once begin is called and baud rate settings are valid.
 
-It may also be called while running to change baudrate.
+`begin()` and `setBaudRate()` will return `true` if bus was started successfully.
+
+`setBaudRate()` may also be called while running to change baudrate.
+
+For FDCAN devices a 2nd argument may be passed to specify the baud rate for the data phase for switched CAN-FD mode.
+```Cpp
+Can1.begin(500000, 1000000);
+Can1.setBaudRate(500000, 1000000);
+```
 
 Call
 ```Cpp
@@ -106,13 +120,16 @@ Only one STM32_CAN instance can control a CAN Peripheral at one time. It reserve
 Filters may only be set after bus is started (`begin()` & `setBaudRate()` was called).
 
 By default bank 0 will receive CAN messages with all IDs. But using filters, we can set the CAN to receive
-only specific message IDs. The CAN peripheral has many different methods of defining filters for messages.
+only specific message IDs. The CAN peripherals have many different methods of defining filters for messages. The different peripherals have different types of filter definitions, so some are only available with those peripherals.
 These functions help setting up filters:
 ```Cpp
 bool setFilterSingleMask(uint8_t bank_num, uint32_t id,  uint32_t mask,  IDE std_ext);
 bool setFilterDualID    (uint8_t bank_num, uint32_t id1, uint32_t id2,   IDE std_ext1, IDE std_ext2);
+//only for bxCAN devices
 bool setFilterDualMask  (uint8_t bank_num, uint32_t id1, uint32_t mask1, IDE std_ext1, uint32_t id2, uint32_t mask2, IDE std_ext2);
 bool setFilterQuadID    (uint8_t bank_num, uint32_t id1, IDE std_ext1, uint32_t id2, IDE std_ext2, uint32_t id3, IDE std_ext3, uint32_t id4, IDE std_ext4);
+//only for FDCAN devices
+bool setFilterRange     (uint8_t bank_num, uint32_t id1, uint32_t id2,  IDE std_ext);
 ```
 The simplest one is `setFilterSingleMask`. The others allow setting multiple filters into a single filter bank. When using the functions `setFilterDualMask` and `setFilterQuadID` for extended ids, the 15 LSBs of the ID are always masked out.
 
@@ -137,12 +154,32 @@ To disable a filter bank call (`true` to re-enable it)
 Can1.setFilter(bank_num, false);
 ```
 
+The filter bank layout differs between bxCAN and FDCAN devices. On bxCAN devices there is a single set of filter banks for each instance that is shared between standard and extended filters. On FDCAN devices there are 2 sets of filter banks, one for standard and one for extended filters.
+
+For example, on bxCAN Devices to define a standard and an extended filter the bank number has to be incremented. While on FDCAN both can be set to the 0th bank, since STD and EXT filters have dedicated filter banks.
+```Cpp
+//bxCAN
+Can1.setFilterSingleMask( 0, 0x153, 0x7FF, STD);
+Can1.setFilterSingleMask( 1, 0x613, 0x1FFFFFFF, EXT); //using bank 0 here would overwrite above filter
+//FDCAN
+Can1.setFilterSingleMask( 0, 0x153, 0x7FF, STD);
+Can1.setFilterSingleMask( 0, 0x613, 0x1FFFFFFF, EXT); //this does not overwrite above since id type differs
+```
+
+This function may be used to detect if filter banks are shared for each id type, or if there are separate banks for each type.
+```Cpp
+Can1.hasSharedFilterBanks() // true for bxCAN, false for FDCAN
+```
 
 The amount of available filter banks can be queried with:
 ```Cpp
-Can1.getFilterBankCount()
+Can1.getFilterBankCount(IDE std_ext)
 ```
-**Note**: Single CAN devices have 14, dual CAN devices 28. Driver does split the 28 into 14 for each CAN instance.
+If filter banks are shared, the argument is ignored and there is only a single amount of filter banks.
+
+bxCAN devices with a single CAN have 14, dual CAN devices 28. Driver does split the 28 into 14 for each CAN instance.
+
+For FDCAN devices the filter bank count depends on ID type. Typically there are 28 banks for standard IDs and 14 for extended.
 
 
 ### Main loop
@@ -157,8 +194,12 @@ typedef struct CAN_message_t {
     bool remote = 0;       // remote transmission request packet type
     bool overrun = 0;      // message overrun
     bool reserved = 0;
+    //only on FDCAN devices
+    bool fd_frame = false;
+    bool fd_rateswitch = false;
   } flags;
   uint8_t len = 8;         // length of data
+  //buf size is 64 on FDCAN devices
   uint8_t buf[8] = { 0 };  // data
   int8_t mb = 0;           // used to identify mailbox reception
   uint8_t bus = 1;         // used to identify where the message came (CAN1, CAN2 or CAN3)
